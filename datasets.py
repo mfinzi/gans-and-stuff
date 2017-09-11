@@ -1,7 +1,6 @@
 import numpy as np
 from abc import ABCMeta, abstractmethod
 
-
 class Dataset:
 	"""
 	Abstract base class representing a dataset and defyning the interface.
