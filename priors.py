@@ -14,7 +14,8 @@ class Prior:
 		Args:
 			model: torch.nn.Module instance
         """
-        pass
+        raise NotImplementedError
+
 
 class FactorizedNormalPrior(Prior):
     
