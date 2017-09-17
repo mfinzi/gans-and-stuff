@@ -39,6 +39,7 @@ class SynthDataset(data.Dataset):
             Xs.append(X)
         X_raw = np.concatenate(Xs)
         self.X = (X_raw - X_raw.mean(0)) / (X_raw.std(0))
+        self.X = torch.from_numpy(self.X).float()
 
     def __getitem__(self, index):
         """
