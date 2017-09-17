@@ -31,5 +31,5 @@ class FactorizedNormalPrior(Prior):
     def log_density(self, model):
         log_prior = 0.
         for param in model.parameters():
-            log_prior += torch.sum(param / self.std)**2
+            log_prior += -torch.sum(param**2 / 2 * self.std**2)
         return log_prior

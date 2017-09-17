@@ -4,7 +4,8 @@ import torch.utils.data as data
 
 class SynthDataset(data.Dataset):
     
-    def __init__(self, x_dim=100, true_z_dim=2, N=10000, num_clusters=10, seed=None):
+    def __init__(self, x_dim=100, true_z_dim=2, N=10000, num_clusters=10, 
+            seed=None):
         """
         Synthetic dataset.
         
@@ -15,7 +16,7 @@ class SynthDataset(data.Dataset):
             num_clusters: number of clusters (modes) of the distribution
             seed: random seed
         """
-        np.random.seed(None)
+        np.random.seed(seed)
         self.x_dim = x_dim
         self.N = N
         self.true_z_dim = true_z_dim
