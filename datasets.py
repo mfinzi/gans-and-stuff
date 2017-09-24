@@ -1,6 +1,7 @@
 import numpy as np
 from abc import ABCMeta, abstractmethod
 import torch.utils.data as data
+import torch
 
 class SynthDataset(data.Dataset):
     
