@@ -1,6 +1,10 @@
+import torch
+import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
+
+
 class BGAN:
     
     def __init__(self, generator, discriminator, 
@@ -24,7 +28,7 @@ class BGAN:
             observed_gen: number of data observed by the generator; this 
                 hyper-parameter affects the uncertainty in the generator weights
         """
-        super(BGAN, self).__init__()
+#        super(BGAN, self).__init__()
         
         self.generator = generator
         self.discriminator = discriminator
@@ -83,7 +87,7 @@ class BGAN:
         #generator loss
         g_loss = bce_fake * self.eta
         g_loss += (self.generator_prior.log_density(self.generator) 
-                    * self.eta / self.obsered_gen)
+                    * self.eta / self.observed_gen)
         g_loss += self.noise(self.generator, noise_std) / self.observed_gen
         g_loss *= -1.
         return d_loss, g_loss
@@ -138,7 +142,7 @@ class BGAN:
                 samples
         """
 
-        batchv = Variable(batch)
+        batchv = Variable(x_batch)
         self.discriminator.zero_grad()
         self.generator.zero_grad()
         d_loss, g_loss = self.loss(batchv)
