@@ -9,7 +9,7 @@ class BGAN:
     
     def __init__(self, generator, discriminator, 
                  generator_prior, discriminator_prior, num_data,
-                 J=1, M=1, eta=2e-4, alpha=0.01, observed_gen=50):
+                 J=1, M=1, eta=2e-4, alpha=0.01, observed_gen=50, disc_lr=None):
         """
         Creates a Bayesian GAN for the given generator and discriminator.
         
@@ -41,6 +41,10 @@ class BGAN:
         self.num_gen = J
         self.num_mcmc = M
         self.eta = eta
+        if disc_lr is None:
+            self.disc_lr = eta
+        else:
+            self.disc_lr = disc_lr
         self.alpha = alpha
         self.num_data = num_data
         self.observed_gen = observed_gen
@@ -78,7 +82,7 @@ class BGAN:
         noise_std = np.sqrt(2 * self.alpha * self.eta)
         
         #discriminator loss
-        d_loss = -(bce_real + bce_fake) * self.eta 
+        d_loss = -(bce_real + bce_fake) * self.disc_lr
 #         d_loss += (self.discriminator_prior.log_density(self.discriminator) 
 #                       * self.eta #/ self.num_data)
 #         d_loss += self.noise(self.generator, noise_std) #/ self.num_data
@@ -113,7 +117,7 @@ class BGAN:
         """
         Initializes the optimizers for BGAN.
         """
-        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1, 
+        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1,
                             momentum=(1 - self.alpha))
         self.g_optimizer = optim.SGD(self.generator.parameters(), lr=1, 
                             momentum=(1 - self.alpha))
