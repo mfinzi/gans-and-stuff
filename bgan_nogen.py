@@ -60,7 +60,7 @@ class BGANNG:
         self.discriminator = discriminator
         self.generator = generator
         
-        self.x_dim = discriminator.x_dim
+#        self.x_dim = discriminator.x_dim
         self.eta = eta
         self.alpha = alpha
         self.num_data = num_data

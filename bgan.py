@@ -34,7 +34,7 @@ class BGAN:
         self.generator_prior = generator_prior
         self.discriminator_prior = discriminator_prior
         
-        self.x_dim = generator.output_dim
+#        self.x_dim = generator.output_dim
         self.z_dim = generator.input_dim
 
         self.num_gen = J

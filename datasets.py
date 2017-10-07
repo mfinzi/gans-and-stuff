@@ -64,14 +64,19 @@ class DigitsDataset(data.Dataset):
         digits = load_digits()
         X = digits.data
         self.scaler_x = StandardScaler()
-        X = scaler_x.fit_transform(X)
+        X = self.scaler_x.fit_transform(X)
 
         self.N = X.shape[0]
         self.X = torch.from_numpy(X).float()
         
     def __getitem__(self, index):
         x = self.X[index]
-        return x
+        return x.view(1, 8, 8)
 
     def __len__(self):
         return self.N
+
+    def inverse_transform(self, x):
+        x = x.view(-1, 64).numpy()
+        x = self.scaler_x.inverse_transform(x)
+        return x.reshape([-1, 1, 8, 8])
