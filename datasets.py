@@ -1,7 +1,9 @@
 import numpy as np
-from abc import ABCMeta, abstractmethod
 import torch.utils.data as data
 import torch
+from abc import ABCMeta, abstractmethod
+from sklearn.datasets import load_digits
+from sklearn.preprocessing import StandardScaler
 
 class SynthDataset(data.Dataset):
     
@@ -55,3 +57,21 @@ class SynthDataset(data.Dataset):
     def __len__(self):
         return self.N
         
+
+class DigitsDataset(data.Dataset):
+
+    def __init__(self):
+        digits = load_digits()
+        X = digits.data
+        self.scaler_x = StandardScaler()
+        X = scaler_x.fit_transform(X)
+
+        self.N = X.shape[0]
+        self.X = torch.from_numpy(X).float()
+        
+    def __getitem__(self, index):
+        x = self.X[index]
+        return x
+
+    def __len__(self):
+        return self.N

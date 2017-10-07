@@ -1,17 +1,45 @@
 import torch
-import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
+import numpy as np
 
+class FixedSizeDataset(torch.utils.data.Dataset):
+    """
+    Dataset with a fixed size, that allows appending new data.
 
-class BGAN:
+    This class is meant to be used with BGANNG.
+    """
     
-    def __init__(self, generator, discriminator, 
-                 generator_prior, discriminator_prior, num_data,
-                 J=1, M=1, eta=2e-4, alpha=0.01, observed_gen=50, disc_lr=None):
+    def __init__(self, maxlen):
         """
-        Creates a Bayesian GAN for the given generator and discriminator.
+        Creates a FixedSozeDataset object.
+
+        Args:
+            maxlen: maximum size of the dataset
+        """
+        self.elems = []
+        self.maxlen = maxlen
+        
+    def __getitem__(self, index):
+        return self.elems[index]
+    
+    def append(self, elem):
+        self.elems.append(elem)
+        if len(self) > self.maxlen:
+            self.elems = self.elems[1:]
+    
+    def __len__(self):
+        return len(self.elems)
+
+
+class BGANNG:
+    
+    def __init__(self, generator, generator_prior, discriminator, num_data, 
+                eta=2e-4, alpha=0.01, max_fake=10000, disc_lr=1e-3, 
+                observed_gen=50):
+        """
+        Creates a Bayesian GAN with no generator.
         
         Args:
             generator: `torch.nn.Module` instance, generator network
@@ -26,32 +54,35 @@ class BGAN:
             alpha: float, momentum variable; also affects noise variance in 
                 SGHMC
             observed_gen: number of data observed by the generator; this 
-                hyper-parameter affects the uncertainty in the generator weights
+                hyper-parameter affects the uncertainty in the generator
         """
-        
-        self.generator = generator
-        self.discriminator = discriminator
-        self.generator_prior = generator_prior
-        self.discriminator_prior = discriminator_prior
-        
-        self.x_dim = generator.output_dim
-        self.z_dim = generator.input_dim
 
-        self.num_gen = J
-        self.num_mcmc = M
+        self.discriminator = discriminator
+        self.generator = generator
+        
+        self.x_dim = discriminator.x_dim
         self.eta = eta
-        if disc_lr is None:
-            self.disc_lr = eta
-        else:
-            self.disc_lr = disc_lr
         self.alpha = alpha
         self.num_data = num_data
-        self.observed_gen = observed_gen
+        self.disc_lr = disc_lr
+        self.generator_prior = generator_prior
             
         self.K = discriminator.K
         self._init_optimizers()
+        self.fake_dataset = FixedSizeDataset(max_fake)
+        self.fake_dataset.append(np.copy(self.generator.forward().data.numpy())[0, :])
+        self.fake_batch_loader = torch.utils.data.DataLoader(self.fake_dataset, 
+                                                            batch_size=64, shuffle=True)
+        self.fake_batch_generator = self.get_fake_batch()
+        self.gen_observed = observed_gen
+        
+    def get_fake_batch(self):
+        while True:
+            for batch in self.fake_batch_loader:
+                yield Variable(batch.float())
             
     def loss(self, x_batch):
+        batch_size = x_batch.size()[0]
         """
         Computes the losses for the biven batch of data samples.
 
@@ -63,33 +94,37 @@ class BGAN:
             d_loss: float, discriminator loss
             g_loss: float, generator loss
         """
-        batch_size = x_batch.size()[0]
-        x_fake = self.sample(batch_size)
+        fake_batch = next(self.fake_batch_generator)
+        x_gen = self.generator.forward()
         x_real = x_batch
         
+        
         d_logits_real = self.discriminator(x_real)[:, 0]
-        d_logits_fake = self.discriminator(x_fake)[:, 0]
+        d_logits_fake = self.discriminator(fake_batch)[:, 0]
+        d_logits_gen = self.discriminator(x_gen)[:, 0]
         
         y_real = Variable(torch.ones(batch_size))
-        y_fake = Variable(torch.zeros(batch_size))
-
+        y_fake = Variable(torch.zeros(fake_batch.size()[0]))
+        y_gen = Variable(torch.zeros(x_gen.size()[0]))
+        
         bce = nn.BCELoss()
         bce_real = bce(d_logits_real, y_real)
-
         bce_fake = bce(d_logits_fake, y_fake)
-        
+        bce_gen = bce(d_logits_gen, y_gen)
         noise_std = np.sqrt(2 * self.alpha * self.eta)
         
-        #discriminator loss
         d_loss = -(bce_real + bce_fake) * self.disc_lr
         d_loss *= -1.
         
         #generator loss
-        g_loss = bce_fake * self.eta
-        g_loss += (self.generator_prior.log_density(self.generator) 
-                    * self.eta / self.observed_gen)
-        g_loss += self.noise(self.generator, noise_std) / self.observed_gen
+        g_loss = torch.sum(torch.log(d_logits_gen[0])) * self.eta
+        g_loss -= torch.sum(1 - torch.log(d_logits_gen[0])) * self.eta
+        g_loss += self.noise(self.generator, noise_std) / self.gen_observed
+        g_loss += (self.generator_prior.log_density(self.generator)
+                      * self.eta) / self.gen_observed
         g_loss *= -1.
+        self.d_loss_fake = (bce_fake).data.numpy()[0]
+        self.d_loss_real = bce_real.data.numpy()[0]
         return d_loss, g_loss
         
     @staticmethod
@@ -113,24 +148,10 @@ class BGAN:
         """
         Initializes the optimizers for BGAN.
         """
-        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1,
-                            momentum=(1 - self.alpha))
+        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1, 
+                momentum=(1 - self.alpha))
         self.g_optimizer = optim.SGD(self.generator.parameters(), lr=1, 
-                            momentum=(1 - self.alpha))
-        
-    def sample(self, n_samples=1):
-        """
-        Samples from BGAN generator.
-
-        Args:
-            n_samples: int, number of samples to produce
-        Returns:
-            `torch` variable containing `torch.FloatTensor` of shape 
-                `(n_samles, z_dim)`
-        """
-        z = torch.rand(n_samples, self.z_dim)
-        zv = Variable(z)
-        return self.generator(zv)
+                momentum=(1 - self.alpha))
         
     
     def step(self, x_batch):
@@ -141,7 +162,6 @@ class BGAN:
             x_batch: `torch.FloatTensor` of shape `(batch_size, x_dim)`; data
                 samples
         """
-
         batchv = Variable(x_batch)
         self.discriminator.zero_grad()
         self.generator.zero_grad()
@@ -150,5 +170,5 @@ class BGAN:
         self.d_optimizer.step()
         
         g_loss.backward()
-        self.g_optimizer.step()        
+        self.g_optimizer.step()     
         
