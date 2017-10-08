@@ -60,7 +60,6 @@ class BGANNG:
         self.discriminator = discriminator
         self.generator = generator
         
-#        self.x_dim = discriminator.x_dim
         self.eta = eta
         self.alpha = alpha
         self.num_data = num_data
@@ -82,7 +81,6 @@ class BGANNG:
                 yield Variable(batch.float())
             
     def loss(self, x_batch):
-        batch_size = x_batch.size()[0]
         """
         Computes the losses for the biven batch of data samples.
 
@@ -94,6 +92,7 @@ class BGANNG:
             d_loss: float, discriminator loss
             g_loss: float, generator loss
         """
+        batch_size = x_batch.size()[0]
         fake_batch = next(self.fake_batch_generator)
         x_gen = self.generator.forward()
         x_real = x_batch
@@ -117,8 +116,8 @@ class BGANNG:
         d_loss *= -1.
         
         #generator loss
-        g_loss = torch.sum(torch.log(d_logits_gen[0])) * self.eta
-        g_loss -= torch.sum(1 - torch.log(d_logits_gen[0])) * self.eta
+        g_loss = torch.mean(torch.log(d_logits_gen[0])) * self.eta
+        g_loss -= torch.mean(torch.log(1 - d_logits_gen[0])) * self.eta
         g_loss += self.noise(self.generator, noise_std) / self.gen_observed
         g_loss += (self.generator_prior.log_density(self.generator)
                       * self.eta) / self.gen_observed
