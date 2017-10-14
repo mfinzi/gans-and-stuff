@@ -147,8 +147,9 @@ class BGANNG:
         """
         Initializes the optimizers for BGAN.
         """
-        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1, 
-                momentum=(1 - self.alpha))
+#        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1, 
+#                momentum=(1 - self.alpha))
+        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1)
         self.g_optimizer = optim.SGD(self.generator.parameters(), lr=1, 
                 momentum=(1 - self.alpha))
         

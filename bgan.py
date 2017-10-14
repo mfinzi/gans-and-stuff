@@ -8,8 +8,8 @@ from torch.autograd import Variable
 class BGAN:
     
     def __init__(self, generator, discriminator, 
-                 generator_prior, discriminator_prior, num_data,
-                 J=1, M=1, eta=2e-4, alpha=0.01, observed_gen=50, disc_lr=None):
+                 generator_prior, num_data,
+                 eta=2e-4, alpha=0.01, observed_gen=50, disc_lr=None):
         """
         Creates a Bayesian GAN for the given generator and discriminator.
         
@@ -18,10 +18,6 @@ class BGAN:
             discriminator: `torch.nn.Module` instance, discriminator network
             generator_prior: `Prior` instance, prior over the weights of
                 generator network
-            discriminator_prior: `Prior` instance, prior over the weights of
-                discriminator network
-            J: int, number number of models to average
-            M: int, number of MCMC steps per iteration
             eta: float, learning rate; also affects noise variance in SGHMC
             alpha: float, momentum variable; also affects noise variance in 
                 SGHMC
@@ -32,13 +28,11 @@ class BGAN:
         self.generator = generator
         self.discriminator = discriminator
         self.generator_prior = generator_prior
-        self.discriminator_prior = discriminator_prior
+#        self.discriminator_prior = discriminator_prior
         
 #        self.x_dim = generator.output_dim
         self.z_dim = generator.input_dim
 
-        self.num_gen = J
-        self.num_mcmc = M
         self.eta = eta
         if disc_lr is None:
             self.disc_lr = eta
@@ -85,10 +79,17 @@ class BGAN:
         d_loss *= -1.
         
         #generator loss
-        g_loss = bce_fake * self.eta
-        g_loss += (self.generator_prior.log_density(self.generator) 
-                    * self.eta / self.observed_gen)
+#        g_loss = bce_fake * self.eta
+#        g_loss += (self.generator_prior.log_density(self.generator) 
+#                    * self.eta / self.observed_gen)
+#        g_loss += self.noise(self.generator, noise_std) / self.observed_gen
+#        g_loss *= -1.
+
+        g_loss = torch.mean(torch.log(d_logits_fake[0])) * self.eta
+        g_loss -= torch.mean(torch.log(1 - d_logits_fake[0])) * self.eta
         g_loss += self.noise(self.generator, noise_std) / self.observed_gen
+        g_loss += (self.generator_prior.log_density(self.generator)
+                      * self.eta) / self.observed_gen
         g_loss *= -1.
         return d_loss, g_loss
         
@@ -113,8 +114,8 @@ class BGAN:
         """
         Initializes the optimizers for BGAN.
         """
-        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1,
-                            momentum=(1 - self.alpha))
+        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1)
+#                            momentum=(1 - self.alpha))
         self.g_optimizer = optim.SGD(self.generator.parameters(), lr=1, 
                             momentum=(1 - self.alpha))
         
