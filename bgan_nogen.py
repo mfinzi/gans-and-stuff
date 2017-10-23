@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 import numpy as np
+import torch.backends.cudnn as cudnn
 
 class FixedSizeDataset(torch.utils.data.Dataset):
     """
@@ -37,7 +38,7 @@ class BGANNG:
     
     def __init__(self, generator, generator_prior, discriminator, num_data, 
                 eta=2e-4, alpha=0.01, max_fake=10000, disc_lr=1e-3, 
-                observed_gen=50):
+                observed_gen=50, cuda=False):
         """
         Creates a Bayesian GAN with no generator.
         
@@ -55,6 +56,7 @@ class BGANNG:
                 SGHMC
             observed_gen: number of data observed by the generator; this 
                 hyper-parameter affects the uncertainty in the generator
+            cuda: boolean, wether or not to use CUDA
         """
 
         self.discriminator = discriminator
