@@ -56,11 +56,17 @@ class BGANNG:
                 SGHMC
             observed_gen: number of data observed by the generator; this 
                 hyper-parameter affects the uncertainty in the generator
-            cuda: boolean, wether or not to use CUDA
         """
 
         self.discriminator = discriminator
         self.generator = generator
+
+        self.cuda = cuda
+
+        if self.cuda:
+            print('Moving generator and discriminator to GPU')
+            self.discriminator.cuda()
+            self.generator.cuda() # should I do this
         
         self.eta = eta
         self.alpha = alpha
@@ -99,16 +105,24 @@ class BGANNG:
         x_gen = self.generator.forward()
         x_real = x_batch
         
+        if self.cuda:
+            fake_batch = fake_batch.cuda()
+            x_real = x_real.cuda()
+            x_gen = x_gen.cuda()
         
         d_logits_real = self.discriminator(x_real)[:, 0]
         d_logits_fake = self.discriminator(fake_batch)[:, 0]
         d_logits_gen = self.discriminator(x_gen)[:, 0]
         
-        y_real = Variable(torch.ones(batch_size))
-        y_fake = Variable(torch.zeros(fake_batch.size()[0]))
-        y_gen = Variable(torch.zeros(x_gen.size()[0]))
+        if self.cuda:
+            y_real = Variable(torch.ones(batch_size)).cuda()
+            y_fake = Variable(torch.zeros(fake_batch.size()[0])).cuda()
+            y_gen = Variable(torch.zeros(x_gen.size()[0])).cuda()
         
         bce = nn.BCELoss()
+        if self.cuda:
+            bce.cuda()
+
         bce_real = bce(d_logits_real, y_real)
         bce_fake = bce(d_logits_fake, y_fake)
         bce_gen = bce(d_logits_gen, y_gen)
