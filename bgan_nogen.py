@@ -108,9 +108,11 @@ class BGANNG:
         if self.cuda:
             fake_batch = fake_batch.cuda()
             x_real = x_real.cuda()
+#            print('x_real.cuda()')
             x_gen = x_gen.cuda()
         
         d_logits_real = self.discriminator(x_real)[:, 0]
+#        print(d_logits_real)
         d_logits_fake = self.discriminator(fake_batch)[:, 0]
         d_logits_gen = self.discriminator(x_gen)[:, 0]
         
@@ -134,12 +136,18 @@ class BGANNG:
         #generator loss
         g_loss = torch.mean(torch.log(d_logits_gen[0])) * self.eta
         g_loss -= torch.mean(torch.log(1 - d_logits_gen[0])) * self.eta
-        g_loss += self.noise(self.generator, noise_std) / self.gen_observed
-        g_loss += (self.generator_prior.log_density(self.generator)
+        g_noise= self.noise(self.generator, noise_std) / self.gen_observed
+        g_prior = (self.generator_prior.log_density(self.generator)
                       * self.eta) / self.gen_observed
+        if self.cuda:
+            g_prior = g_prior.cuda()
+            g_noise = g_noise.cuda()
+
+        g_loss += g_prior
+        g_loss += g_noise
         g_loss *= -1.
-        self.d_loss_fake = (bce_fake).data.numpy()[0]
-        self.d_loss_real = bce_real.data.numpy()[0]
+        self.d_loss_fake = (bce_fake).data.cpu().numpy()[0]
+        self.d_loss_real = bce_real.data.cpu().numpy()[0]
         return d_loss, g_loss
         
     @staticmethod
