@@ -143,6 +143,8 @@ class BGAN:
         """
         z = torch.rand(n_samples, self.z_dim)
         zv = Variable(z)
+        if self.cuda:
+            zv = zv.cuda()
         return self.generator(zv)
         
     
