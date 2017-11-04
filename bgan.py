@@ -45,7 +45,6 @@ class BGAN:
         self.observed_gen = gen_observed 
         self.MAP = MAP
             
-        self.K = discriminator.K
         self._init_optimizers()
             
     def loss(self, x_batch):
@@ -69,8 +68,8 @@ class BGAN:
             x_real = x_real.cuda()
             x_gen = x_gen.cuda()
 
-        d_logits_real = self.discriminator(x_real)[:, 0]
-        d_logits_fake = self.discriminator(x_fake)[:, 0]
+        d_logits_real = self.discriminator(x_real)
+        d_logits_fake = self.discriminator(x_fake)
         y_real = Variable(torch.ones(batch_size))
         y_fake = Variable(torch.zeros(batch_size))
 
