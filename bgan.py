@@ -7,9 +7,8 @@ from torch.autograd import Variable
 
 class BGAN:
     
-    def __init__(self, generator, discriminator, 
-                 generator_prior, num_data,
-                 eta=2e-4, alpha=0.01, gen_observed=50, disc_lr=None):
+    def __init__(self, generator, discriminator, generator_prior, eta=2e-4, 
+            alpha=0.01, gen_observed=50, disc_lr=None, MAP=False, cuda=False):
         """
         Creates a Bayesian GAN for the given generator and discriminator.
         
@@ -23,11 +22,19 @@ class BGAN:
                 SGHMC
             gen_observed: number of data observed by the generator; this 
                 hyper-parameter affects the uncertainty in the generator weights
+            MAP: bool, if `True` a map estimate is used instead of sampling
+            cuda: bool, if `True` CUDA is used to run the computations on GPU
         """
         self.generator = generator
         self.discriminator = discriminator
         self.generator_prior = generator_prior
         self.z_dim = generator.input_dim
+
+        self.cuda = cuda
+        if self.cuda:
+            print('Moving generator and discriminator to GPU')
+            self.discriminator.cuda()
+            self.generator.cuda()
 
         self.eta = eta
         if disc_lr is None:
@@ -35,8 +42,8 @@ class BGAN:
         else:
             self.disc_lr = disc_lr
         self.alpha = alpha
-        self.num_data = num_data
         self.observed_gen = gen_observed 
+        self.MAP = MAP
             
         self.K = discriminator.K
         self._init_optimizers()
@@ -56,15 +63,28 @@ class BGAN:
         batch_size = x_batch.size()[0]
         x_fake = self.sample(batch_size)
         x_real = x_batch
+        
+        if self.cuda:
+            fake_batch = fake_batch.cuda()
+            x_real = x_real.cuda()
+            x_gen = x_gen.cuda()
+
         d_logits_real = self.discriminator(x_real)[:, 0]
         d_logits_fake = self.discriminator(x_fake)[:, 0]
         y_real = Variable(torch.ones(batch_size))
         y_fake = Variable(torch.zeros(batch_size))
+
+        if self.cuda:
+            y_real = y_real.cuda()
+            y_fake = y_fake.cuda()
+        
         bce = nn.BCELoss()
+        bce = nn.BCELoss()
+        if self.cuda:
+            bce.cuda()
+
         bce_real = bce(d_logits_real, y_real)
         bce_fake = bce(d_logits_fake, y_fake)
-        
-        noise_std = np.sqrt(2 * self.alpha * self.eta)
         
         #discriminator loss
         d_loss = -(bce_real + bce_fake) 
@@ -74,8 +94,10 @@ class BGAN:
         g_loss = torch.mean(torch.log(d_logits_fake))
         g_loss += (self.generator_prior.log_density(self.generator) / 
                 self.observed_gen)
-        g_loss += (self.noise(self.generator, noise_std) / 
-                (self.observed_gen * self.eta))
+        if not self.MAP:
+            noise_std = np.sqrt(2 * self.alpha * self.eta)
+            g_loss += (self.noise(self.generator, noise_std) / 
+                    (self.observed_gen * self.eta))
         g_loss *= -1.
         return d_loss, g_loss
         
@@ -100,15 +122,14 @@ class BGAN:
         """
         Initializes the optimizers for BGAN.
         """
-#        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1)#,
-#                            momentum=(1 - self.alpha))
-#        self.g_optimizer = optim.SGD(self.generator.parameters(), lr=1, 
-#                            momentum=(1 - self.alpha))
-        self.d_optimizer = optim.Adam(self.discriminator.parameters(), lr=self.disc_lr)#,
-#                            betas=(0.5, 0.999))
-#                            betas=(1-self.alpha, 0.999))
-        self.g_optimizer = optim.Adam(self.generator.parameters(), lr=self.eta, 
-                            betas=(1-self.alpha, 0.999))
+        self.d_optimizer = optim.Adam(self.discriminator.parameters(),
+                lr=self.disc_lr)
+        if self.MAP:
+            self.g_optimizer = optim.Adam(self.generator.parameters(), 
+                    lr=self.eta)
+        else:
+            self.g_optimizer = optim.Adam(self.generator.parameters(), 
+                    lr=self.eta, betas=(1-self.alpha, 0.999))
         
         
     def sample(self, n_samples=1):
@@ -139,17 +160,13 @@ class BGAN:
         self.discriminator.zero_grad()
         self.generator.zero_grad()
         d_loss, g_loss = self.loss(batchv)
-        d_loss.backward()#retain_graph=True)
+        d_loss.backward(retain_graph=True)
         self.d_optimizer.step()
         
-        self.generator.zero_grad()
-        self.discriminator.zero_grad()
-        
-        d_loss, g_loss = self.loss(batchv)
+#        self.generator.zero_grad()
+#        self.discriminator.zero_grad()
+#        
+#        d_loss, g_loss = self.loss(batchv)
         g_loss.backward()
-#        for param in self.generator.parameters():
-#            print(param.grad)
-#            print(param)
-#            break
         self.g_optimizer.step()        
         

@@ -1,5 +1,3 @@
-import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
 import numpy as np
@@ -108,18 +106,19 @@ class BGANNG:
         if self.cuda:
             fake_batch = fake_batch.cuda()
             x_real = x_real.cuda()
-#            print('x_real.cuda()')
             x_gen = x_gen.cuda()
         
         d_logits_real = self.discriminator(x_real)[:, 0]
-#        print(d_logits_real)
         d_logits_fake = self.discriminator(fake_batch)[:, 0]
         d_logits_gen = self.discriminator(x_gen)[:, 0]
+        y_real = Variable(torch.ones(batch_size))
+        y_fake = Variable(torch.zeros(fake_batch.size()[0]))
+        y_gen = Variable(torch.zeros(x_gen.size()[0])
         
         if self.cuda:
-            y_real = Variable(torch.ones(batch_size)).cuda()
-            y_fake = Variable(torch.zeros(fake_batch.size()[0])).cuda()
-            y_gen = Variable(torch.zeros(x_gen.size()[0])).cuda()
+            y_real = y_real.cuda()
+            y_fake = y_fake.cuda()
+            y_gen = y_gen.cuda()
         
         bce = nn.BCELoss()
         if self.cuda:

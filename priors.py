@@ -18,11 +18,12 @@ class Prior:
 
 
 class FactorizedNormalPrior(Prior):
+    """
+	Factorized Normal prior over the parameters of the model.
+    """
     
     def __init__(self, std=1.0):
         """
-		Factorized Normal prior over the parameters of the model.
-		
 	    Args:
             std: standard diviation of the normal prior
 		"""
@@ -33,3 +34,12 @@ class FactorizedNormalPrior(Prior):
         for param in model.parameters():
             log_prior += -torch.sum(param**2 / (2 * self.std**2))
         return log_prior
+
+
+class UninformativePrior(Prior):
+    """
+    Prior that is constant for any model.
+    """
+
+    def log_density(self, model):
+        return 1
