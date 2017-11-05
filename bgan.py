@@ -112,8 +112,12 @@ class BGAN:
             loss: float, sum of all parameters of the model multiplied by noise
         """
         loss = 0
+        std = torch.from_numpy(np.array([std])).float().cuda()
+        std = std[0]
         for param in model.parameters():
-            n = Variable(torch.normal(0, std=std*torch.ones(param.size())))
+            means = torch.zeros(param.size()).cuda()
+#            n = Variable(torch.normal(0, std=std*torch.ones(param.size())).cuda())
+            n = Variable(torch.normal(means, std=std).cuda())
             loss += torch.sum(n * param)
         return loss
     
