@@ -64,9 +64,8 @@ class BGAN:
         x_real = x_batch
         
         if self.cuda:
-            fake_batch = fake_batch.cuda()
+            x_fake = x_fake.cuda()
             x_real = x_real.cuda()
-            x_gen = x_gen.cuda()
 
         d_logits_real = self.discriminator(x_real)
         d_logits_fake = self.discriminator(x_fake)
@@ -90,7 +89,8 @@ class BGAN:
         d_loss *= -1.
         
         #generator loss
-        g_loss = torch.mean(torch.log(d_logits_fake))
+#        g_loss = torch.mean(torch.log(d_logits_fake))
+        g_loss = -bce(d_logits_fake, y_real)
         g_loss += (self.generator_prior.log_density(self.generator) / 
                 self.observed_gen)
         if not self.MAP:
@@ -122,10 +122,10 @@ class BGAN:
         Initializes the optimizers for BGAN.
         """
         self.d_optimizer = optim.Adam(self.discriminator.parameters(),
-                lr=self.disc_lr)
+                lr=self.disc_lr, betas=(0.5, 0.999))
         if self.MAP:
             self.g_optimizer = optim.Adam(self.generator.parameters(), 
-                    lr=self.eta)
+                    lr=self.eta, betas=(0.5, 0.999))
         else:
             self.g_optimizer = optim.Adam(self.generator.parameters(), 
                     lr=self.eta, betas=(1-self.alpha, 0.999))
