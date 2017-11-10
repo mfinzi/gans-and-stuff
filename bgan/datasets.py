@@ -8,7 +8,7 @@ from sklearn.preprocessing import StandardScaler
 class SynthDataset(data.Dataset):
     
     def __init__(self, x_dim=100, true_z_dim=2, N=10000, num_clusters=10, 
-            seed=None):
+            seed=None, labeled=False):
         """
         Synthetic dataset.
         
@@ -18,6 +18,8 @@ class SynthDataset(data.Dataset):
             N: number of data points
             num_clusters: number of clusters (modes) of the distribution
             seed: random seed
+            labeled: bool, if True then labels are returned for each sample;
+                the number of labels is equal to the number of clusters
         """
         np.random.seed(seed)
         self.x_dim = x_dim
@@ -25,6 +27,7 @@ class SynthDataset(data.Dataset):
         self.true_z_dim = true_z_dim
         self.num_clusters = num_clusters
         self._generate_points()
+        self.labeled = labeled
         
     def _generate_points(self):
         """
@@ -40,9 +43,12 @@ class SynthDataset(data.Dataset):
             eps = np.random.randn(num_points, self.true_z_dim)
             X = (eps + cluster_mean).dot(A.T)
             Xs.append(X)
+        ys = [np.ones((X.shape[0], 1))*i for (i, X) in enumerate(Xs)]
         X_raw = np.concatenate(Xs)
+        y_raw = np.concatenate(ys)
         self.X = (X_raw - X_raw.mean(0)) / (X_raw.std(0))
         self.X = torch.from_numpy(self.X).float()
+        self.y = torch.from_numpy(y_raw).float()
 
     def __getitem__(self, index):
         """
@@ -51,8 +57,11 @@ class SynthDataset(data.Dataset):
         Returns:
             The data point corresponding to the given index
         """
-        x = self.X[index]
-        return x
+        x, y = self.X[index]
+        if self.labeled:
+            return x, y
+        else:
+            return x
 
     def __len__(self):
         return self.N
