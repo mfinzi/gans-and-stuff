@@ -89,7 +89,6 @@ class BGAN:
         d_loss *= -1.
         
         #generator loss
-#        g_loss = torch.mean(torch.log(d_logits_fake))
         g_loss = -bce(d_logits_fake, y_real)
         g_loss += (self.generator_prior.log_density(self.generator) / 
                 self.observed_gen)
@@ -116,7 +115,6 @@ class BGAN:
         std = std[0]
         for param in model.parameters():
             means = torch.zeros(param.size()).cuda()
-#            n = Variable(torch.normal(0, std=std*torch.ones(param.size())).cuda())
             n = Variable(torch.normal(means, std=std).cuda())
             loss += torch.sum(n * param)
         return loss
