@@ -1,6 +1,8 @@
 import numpy as np
 import torch.utils.data as data
 import torch
+
+from torch.autograd import Variable
 from abc import ABCMeta, abstractmethod
 from sklearn.datasets import load_digits
 from sklearn.preprocessing import StandardScaler
@@ -144,11 +146,33 @@ def make_semi_dataset(dataset, labeled_fraction):
     
     if not dataset.labeled:
         raise ValueError('The `dataset` must be labeled')
+    return make_semi_dataset_from_tensors(dataset.X, dataset.y, labeled_fraction)
 
+
+def make_semi_dataset_from_tensors(X, y, labeled_fraction):
+    """
+    Generates a labeled and an unlabeled dataset from given data tensors.
+
+    This method is meant to be used for generating datasets for semi-supervised 
+    classification.
+
+    Args:
+        X: `torch.Tensor`, features of the data samples
+        y: `torch.Tensor`, labels of the data samples
+        labeled_fraction: `float` between 0 and 1, the fraction of labeled data
+            points
+
+    Returns:
+        A tuple (labeled_ds, unlabeled_ds);
+        labeled_ds: `DatasetFromTensors`, a labeled dataset containing a subset
+            of sampes from the `dataset` 
+        unlabeled_ds: `DatasetFromTensors`, an unlabeled dataset containing the 
+        rest of the sampes from the `dataset` 
+    """
     if not (labeled_fraction > 0) or not (labeled_fraction < 1):
         raise ValueError('The `labeled_fraction` must be between 0 and 1')
 
-    X, y = dataset.X.numpy(), dataset.y.numpy()
+    X, y = X.numpy(), y.numpy()
 
     n_labeled = int(y.shape[0] * labeled_fraction)
     labeled_indices = np.random.choice(y.shape[0], size=n_labeled)
@@ -164,3 +188,31 @@ def make_semi_dataset(dataset, labeled_fraction):
     X_unlabeled = torch.from_numpy(X_unlabeled).float()
     unlabeled_ds = DatasetFromTensors(X_unlabeled, labeled=False)
     return labeled_ds, unlabeled_ds
+
+
+def make_batch_generator(dataset, batch_size):
+    """
+    Returns a generator that yields batches of data from the `dataset`.
+
+    Args:
+        dataset: `DatasetFromTensors` with `labeled` value set to `True`
+        batch_size: int, number of instances in a batch
+
+    Returns:
+        A generator that produces batches.
+    """
+
+    ds_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
+            shuffle=True, num_workers=2)
+    while True:
+        for batch in ds_loader:
+            if dataset.labeled:
+                x, y = batch
+                yield (Variable(x, requires_grad=False), 
+                    Variable(y, requires_grad=False).long()[:, 0])
+            else:
+                x = batch
+                yield Variable(x, requires_grad=False)
+
+        
+
