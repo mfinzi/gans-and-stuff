@@ -5,10 +5,11 @@ from abc import ABCMeta, abstractmethod
 from sklearn.datasets import load_digits
 from sklearn.preprocessing import StandardScaler
 
+
 class SynthDataset(data.Dataset):
     
     def __init__(self, x_dim=100, true_z_dim=2, N=10000, num_clusters=10, 
-            seed=None, labeled=False):
+            seed=None, labeled=0, spread=5):
         """
         Synthetic dataset.
         
@@ -18,16 +19,17 @@ class SynthDataset(data.Dataset):
             N: number of data points
             num_clusters: number of clusters (modes) of the distribution
             seed: random seed
-            labeled: bool, if True then labels are returned for each sample;
-                the number of labels is equal to the number of clusters
+            labeled: float, fraction of the number of data samples for which the
+                label is known; if 0, no labels will be returned
         """
         np.random.seed(seed)
         self.x_dim = x_dim
         self.N = N
         self.true_z_dim = true_z_dim
         self.num_clusters = num_clusters
-        self._generate_points()
         self.labeled = labeled
+        self.spread = spread
+        self._generate_points()
         
     def _generate_points(self):
         """
@@ -36,19 +38,37 @@ class SynthDataset(data.Dataset):
         Xs = []
         num_points = int(self.N / self.num_clusters)
         for i in range(self.num_clusters):
-            cluster_mean = np.random.randn(self.true_z_dim) * 5 # to make them more spread
-            A = np.random.randn(self.x_dim, self.true_z_dim) * 5
+            cluster_mean = np.random.randn(self.true_z_dim) * self.spread
+            A = np.random.randn(self.x_dim, self.true_z_dim) * self.spread
             if i == self.num_clusters - 1:
                 num_points += self.N % self.num_clusters
             eps = np.random.randn(num_points, self.true_z_dim)
             X = (eps + cluster_mean).dot(A.T)
             Xs.append(X)
         ys = [np.ones((X.shape[0], 1))*i for (i, X) in enumerate(Xs)]
-        X_raw = np.concatenate(Xs)
-        y_raw = np.concatenate(ys)
-        self.X = (X_raw - X_raw.mean(0)) / (X_raw.std(0))
-        self.X = torch.from_numpy(self.X).float()
-        self.y = torch.from_numpy(y_raw).float()
+        X = np.concatenate(Xs)
+        y = np.concatenate(ys)
+        X = (X - X.mean(0)) / (X.std(0))
+        self.X = torch.from_numpy(X).float()
+        self.true_y = torch.from_numpy(y).float()
+        if self.labeled > 0:
+            
+            self.n_labeled = int(y.size*self.labeled)
+            labeled_indices = np.random.choice(y.shape[0], 
+                    size=self.n_labeled)
+            unlabeled_indices = np.setdiff1d(np.arange(y.shape[0]), 
+                    labeled_indices)
+
+            y_labeled = y[labeled_indices]
+            X_labeled = X[labeled_indices]
+            X_labeled = torch.from_numpy(X_labeled).float()
+            y_labeled = torch.from_numpy(y_labeled).float()
+            self.labeled_dataset = DatasetFromTensors(X_labeled, y_labeled)
+            
+            X_unlabeled = X[unlabeled_indices]
+            X_unlabeled = torch.from_numpy(X_unlabeled).float()
+            self.unlabeled_dataset = DatasetFromTensors(X_unlabeled)
+
 
     def __getitem__(self, index):
         """
@@ -57,7 +77,7 @@ class SynthDataset(data.Dataset):
         Returns:
             The data point corresponding to the given index
         """
-        x, y = self.X[index]
+        x, y = self.X[index], self.semi_y[index]
         if self.labeled:
             return x, y
         else:
@@ -65,6 +85,28 @@ class SynthDataset(data.Dataset):
 
     def __len__(self):
         return self.N
+
+class DatasetFromTensors(data.Dataset):
+
+    def __init__(self, X, y=None):
+        """
+        A dataset from given `X` and `y` torch.Tensors
+        """
+        self.X = X
+        self.y = y
+        self.N = self.X.shape[0]
+
+    def __getitem__(self, index):
+        x = self.X[index]
+        if self.y is not None:
+            y = self.y[index]
+            return x, y
+        else:
+            return x
+
+    def __len__(self):
+        return self.N
+
         
 
 class DigitsDataset(data.Dataset):

@@ -77,7 +77,6 @@ class BGAN:
             y_fake = y_fake.cuda()
         
         bce = nn.BCELoss()
-        bce = nn.BCELoss()
         if self.cuda:
             bce.cuda()
 
