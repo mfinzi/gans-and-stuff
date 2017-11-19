@@ -72,12 +72,6 @@ class WBGAN:
 
         f_real = self.discriminator(x_real)
         f_fake = self.discriminator(x_fake)
-#        y_real = Variable(torch.ones(batch_size))
-#        y_fake = Variable(torch.zeros(batch_size))
-
-        if self.cuda:
-            y_real = y_real.cuda()
-            y_fake = y_fake.cuda()
         
         #discriminator loss
         real_loss = torch.mean(f_real)
@@ -166,7 +160,7 @@ class WBGAN:
         d_loss.backward(retain_graph=True)
         self.d_optimizer.step()
 
-        for p in D.parameters():
+        for p in self.discriminator.parameters():
             p.data.clamp_(-0.01, 0.01)
         
         g_loss.backward()
