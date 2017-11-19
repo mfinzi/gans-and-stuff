@@ -167,7 +167,7 @@ class WBGAN:
         self.d_optimizer.step()
 
         for p in D.parameters():
-            p.data.clamp_(-0.5, 0.5)
+            p.data.clamp_(-0.01, 0.01)
         
         g_loss.backward()
         self.g_optimizer.step()        
