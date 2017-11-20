@@ -116,9 +116,9 @@ class BGANNG:
         d_logits_real = self.discriminator(x_real)
         d_logits_fake = self.discriminator(fake_batch)
         d_logits_gen = self.discriminator(x_gen)
-        y_real = Variable(torch.ones(batch_size))
-        y_fake = Variable(torch.zeros(fake_batch.size()[0]))
-        y_gen = Variable(torch.zeros(x_gen.size()[0]))
+        y_real = Variable(torch.ones(batch_size, 1))
+        y_fake = Variable(torch.zeros(fake_batch.size()[0], 1))
+        y_gen = Variable(torch.zeros(x_gen.size()[0], 1))
         
         if self.cuda:
             y_real = y_real.cuda()
@@ -139,11 +139,6 @@ class BGANNG:
         #generator loss
         noise_std = np.sqrt(2 * self.alpha / self.eta)
         g_loss = -bce(d_logits_gen, y_real[0])
-#        print(y_real[0])
-#        print(d_logits_gen)
-#        print(g_loss)
-#        g_loss = torch.mean(torch.log(d_logits_gen[0])) * self.eta
-#        g_loss -= torch.mean(torch.log(1 - d_logits_gen[0])) * self.eta
         g_noise = self.noise(self.generator, noise_std) / self.gen_observed
         g_prior = (self.generator_prior.log_density(self.generator) / 
                 self.gen_observed)
@@ -151,15 +146,12 @@ class BGANNG:
             g_prior = g_prior.cuda()
             g_noise = g_noise.cuda()
 
-#        g_loss += g_prior
-#        g_loss += g_noise
+        g_loss += g_prior
+        g_loss += g_noise
         g_loss *= -1.
-#        self.d_loss_fake = (bce_fake).data.cpu().numpy()[0]
-#        self.d_loss_real = bce_real.data.cpu().numpy()[0]
         return d_loss, g_loss
         
-    @staticmethod
-    def noise(model, std):
+    def noise(self, model, std):
         """
         Multiplies all the variables by a normal rv for SGHMC.
 
@@ -170,12 +162,17 @@ class BGANNG:
             loss: float, sum of all parameters of the model multiplied by noise
         """
         loss = 0
-        std = torch.from_numpy(np.array([std])).float().cuda()
+        std = torch.from_numpy(np.array([std])).float()
+        if self.cuda:
+            std = std.cuda()
         std = std[0]
         for param in model.parameters():
-            means = torch.zeros(param.size()).cuda()
-#            n = Variable(torch.normal(0, std=std*torch.ones(param.size())).cuda())
-            n = Variable(torch.normal(means, std=std).cuda())
+            means = torch.zeros(param.size())
+            if self.cuda:
+                means = means.cuda()
+            n = Variable(torch.normal(means, std=std))
+            if self.cuda:
+                n = n.cuda()
             loss += torch.sum(n * param)
         return loss
     
@@ -183,17 +180,17 @@ class BGANNG:
         """
         Initializes the optimizers for BGAN.
         """
-        self.d_optimizer = optim.Adam(self.discriminator.parameters(),
-                lr=self.disc_lr, betas=(0.5, 0.999))
-#        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=1)
+#        self.d_optimizer = optim.Adam(self.discriminator.parameters(),
+#                lr=self.disc_lr, betas=(0.5, 0.999))
+        self.d_optimizer = optim.SGD(self.discriminator.parameters(), lr=self.disc_lr)
         if self.MAP:
             self.g_optimizer = optim.Adam(self.generator.parameters(), 
                     lr=self.eta, betas=(0.5, 0.999))
         else:
-            self.g_optimizer = optim.Adam(self.generator.parameters(), 
-                    lr=self.eta, betas=(1-self.alpha, 0.999))
-#        self.g_optimizer = optim.SGD(self.generator.parameters(), lr=1, 
-#                momentum=(1 - self.alpha))
+#            self.g_optimizer = optim.Adam(self.generator.parameters(), 
+#                    lr=self.eta, betas=(1-self.alpha, 0.999))
+            self.g_optimizer = optim.SGD(self.generator.parameters(), lr=self.eta, 
+                momentum=(1 - self.alpha))
         
     
     def step(self, x_batch):

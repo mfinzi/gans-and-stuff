@@ -116,12 +116,13 @@ class WBGAN:
         Initializes the optimizers for BGAN.
         """
         # TODO: use RMSProp?
-        print('Do we want to use RMSProp here?')
-        self.d_optimizer = optim.Adam(self.discriminator.parameters(),
-                lr=self.disc_lr, betas=(0.5, 0.999))
+#        self.d_optimizer = optim.Adam(self.discriminator.parameters(),
+#                lr=self.disc_lr, betas=(0.5, 0.999))
+        self.d_optimizer = optim.RMSprop(self.discriminator.parameters(),
+                lr=self.disc_lr)
         if self.MAP:
-            self.g_optimizer = optim.Adam(self.generator.parameters(), 
-                    lr=self.eta, betas=(0.5, 0.999))
+            self.g_optimizer = optim.RMSprop(self.generator.parameters(), 
+                lr=self.eta)
         else:
             self.g_optimizer = optim.Adam(self.generator.parameters(), 
                     lr=self.eta, betas=(1-self.alpha, 0.999))
@@ -144,25 +145,30 @@ class WBGAN:
         return self.generator(zv)
         
     
-    def step(self, x_batch):
+    def d_step(self, x_batch):
         """
-        Makes an SGHMC step for the parameters of BGAN. 
+        Discriminator step.
 
         Args:
             x_batch: `torch.FloatTensor` of shape `(batch_size, x_dim)`; data
                 samples
         """
-
         batchv = Variable(x_batch)
         self.discriminator.zero_grad()
-        self.generator.zero_grad()
         d_loss, g_loss = self.loss(batchv)
-        d_loss.backward(retain_graph=True)
+        d_loss.backward()
         self.d_optimizer.step()
 
-        for p in self.discriminator.parameters():
-            p.data.clamp_(-0.01, 0.01)
-        
+    def g_step(self, x_batch):
+        """
+        Makes an SGHMC step for the generator parameters. 
+
+        Args:
+            x_batch: `torch.FloatTensor` of shape `(batch_size, x_dim)`; data
+                samples
+        """
+        batchv = Variable(x_batch)
+        self.generator.zero_grad()
+        d_loss, g_loss = self.loss(batchv)
         g_loss.backward()
         self.g_optimizer.step()        
-        
