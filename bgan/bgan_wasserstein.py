@@ -158,8 +158,8 @@ class WBGAN:
         d_loss, g_loss = self.loss(batchv)
         d_loss.backward()
         self.d_optimizer.step()
-#         for p in self.discriminator.parameters():
-#             p.data.clamp_(-.01,.01)
+        for p in self.discriminator.parameters():
+            p.data.clamp_(-10.,10.)
 
     def g_step(self, x_batch):
         """
