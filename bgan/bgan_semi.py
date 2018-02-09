@@ -12,9 +12,7 @@ def logOneMinusSoftmax(x):
     shifted_x = x - max_vals.unsqueeze(-1).expand_as(x)
     exp_x = torch.exp(shifted_x)
     sum_exp_x = exp_x.sum(1).unsqueeze(-1).expand_as(exp_x)
-    first = torch.log(sum_exp_x - exp_x)
-    second = torch.log(sum_exp_x)
-    return first - second
+    return torch.log(1 - exp_x/sum_exp_x)
 
 class BGANS:
     
@@ -26,11 +24,11 @@ class BGANS:
         self.D = D.cuda() #Assert self.D.K > 1
 
         (self.unl_train, self.lab_train, self.dev, self.test) = dataloaders
-        self._setMode() # self.mod = {"uns","semi","fully"}
+        self._setMode() # self.mode = {"uns","semi","fully"}
 
         self.MAP = MAP
         self.save_dir = save_dir
-        if not os.path.exists(save_dir): os.makedirs(save_dir)
+        os.makedirs(save_dir, exist_ok=True)
         
         self.eta, self.alpha = eta, alpha
         self._initOptimizers()
@@ -90,12 +88,15 @@ class BGANS:
 
         #discriminator loss
         d_loss = torch.sum(fake_losses + unl_losses + lab_losses)/batch_size
-        #generator loss (original GAN loss, NOT non-saturating)
-        g_loss = -1*torch.sum(fake_losses)/batch_size
+
+        # minimax game loss
+        #g_losses = -1*fake_losses
+        #generator loss (non-saturating loss) -log(1-P(y=K+1|x))
+        g_losses = -1*logOneMinusSoftmax(self.D(x_fake))[:,self.D.K]
+        g_loss = torch.sum(g_losses)/batch_size
 
         if not self.MAP:
-            observed_gen = 20000 #batch_size # 50 # What is this hyperparameter doing??
-            # It seems like it should be fixed to batch_size
+            observed_gen = 20000 # What is this hyperparameter doing?
             noise_std = np.sqrt(2 * self.alpha * self.eta)
             g_loss += (self.noiseLoss(self.G, noise_std) / 
                     (observed_gen * self.eta))
@@ -185,11 +186,11 @@ class BGANS:
                     losses = np.concatenate((losses,batchLosses))
 
                 if i%500==0:
-                    d_loss,g_loss = losses[-1]*.5 + losses[-2]*.25 + losses[-3]*.25 
-                    print("[%2d/%d][%3d/%d] Loss_D: %.4f \
+                    d_loss,g_loss = losses[-1] 
+                    print("[%3d/%d][%4d/%d] Loss_D: %.4f \
                     Loss_G: %.4f" %(epoch,epochs,i,len(self.unl_train),d_loss,g_loss))
 
-            if epoch%5==0:
+            if epoch%3==0:
                 tutils.save_image(self.sample(8).data, '%s/fake_samples_epoch_%03d.png'\
                             %(self.save_dir,epoch),normalize=True)
 
