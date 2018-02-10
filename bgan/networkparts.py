@@ -36,23 +36,23 @@ class BadGanG(nn.Module):
     
 class BadGanD(nn.Module):
     
-    def __init__(self, d=64, K=1):
+    def __init__(self, d=64, numClasses=2):
         super(BadGanD, self).__init__()
-        self.K = K # Number of 'supervised' classes
+        self.numClasses = numClasses
         self.core_net = nn.Sequential(
             nn.Conv2d(  3,  d,3,1,1), nn.BatchNorm2d(  d), nn.LeakyReLU(0.2),
             nn.Conv2d(  d,  d,3,1,1), nn.BatchNorm2d(  d), nn.LeakyReLU(0.2),
             nn.Conv2d(  d,  d,3,2,1), nn.BatchNorm2d(  d), nn.LeakyReLU(0.2),
-            #nn.Dropout2d(0.5),
+            nn.Dropout2d(0.1),
             nn.Conv2d(  d,2*d,3,1,1), nn.BatchNorm2d(2*d), nn.LeakyReLU(0.2),
             nn.Conv2d(2*d,2*d,3,1,1), nn.BatchNorm2d(2*d), nn.LeakyReLU(0.2),
             nn.Conv2d(2*d,2*d,3,2,1), nn.BatchNorm2d(2*d), nn.LeakyReLU(0.2),
-            #nn.Dropout2d(0.5),
+            nn.Dropout2d(0.1),
             nn.Conv2d(2*d,2*d,3,1,0), nn.BatchNorm2d(2*d), nn.LeakyReLU(0.2),
             nn.Conv2d(2*d,2*d,1,1,0), nn.BatchNorm2d(2*d), nn.LeakyReLU(0.2),
             nn.Conv2d(2*d,2*d,1,1,0), nn.BatchNorm2d(2*d), nn.LeakyReLU(0.2),
             Expression(lambda tensor: tensor.mean(3).mean(2).squeeze()),
-            nn.Linear(2*d,self.K+1),
-        )
+            nn.Linear(2*d,self.numClasses),
+        ) # todo: replace batchnorm with weightnorm
     def forward(self, x):
         return self.core_net(x)
