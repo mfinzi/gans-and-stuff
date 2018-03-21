@@ -3,196 +3,173 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
-import torchvision.utils as tutils
-import os
+import torch.nn.functional as F
+import torchvision.utils as vutils
+import tensorboardX
+import itertools
+from bgan.utils import to_var_gpu, prettyPrintLog, logOneMinusSoftmax
+from bgan.cnnTrainer import CnnTrainer
 
-def logOneMinusSoftmax(x):
-    """ numerically more stable version of log(1-softmax(x)) """
-    max_vals, _ = torch.max(x, 1)
-    shifted_x = x - max_vals.unsqueeze(-1).expand_as(x)
-    exp_x = torch.exp(shifted_x)
-    sum_exp_x = exp_x.sum(1).unsqueeze(-1).expand_as(exp_x)
-    return torch.log(1 - exp_x/sum_exp_x)
 
-class BGANS:
+class GanTrainer(CnnTrainer):
     
-    def __init__(self, G, D, dataloaders, save_dir, MAP = True, 
-                            eta=2e-4, alpha=.01):
+    def __init__(self, G, D, datasets, amntLab, save_dir, batchSize = 64, 
+                    lr=1e-4, momentum=.5, featMatch = False, 
+                    bayesianG = False, bayesianD = False, genObserved=50000,
+                    lipPenalty = False):
         """ Creates a Bayesian GAN for generator G, discriminator D, and optimizer O.
         """
-        self.G = G.cuda()
-        self.D = D.cuda() #Assert self.D.K > 1
+        self.writer = tensorboardX.SummaryWriter(save_dir)
 
-        (self.unl_train, self.lab_train, self.dev, self.test) = dataloaders
-        self._setMode() # self.mode = {"uns","semi","fully"}
-
-        self.MAP = MAP
-        self.save_dir = save_dir
-        os.makedirs(save_dir, exist_ok=True)
+        assert torch.cuda.is_available(), "CUDA or GPU working"
+        self.G = G.cuda(); self.writer.add_text('ModelSpec','Generator: '+type(G).__name__)
+        self.D = D.cuda(); self.writer.add_text('ModelSpec','Discriminator: '+type(D).__name__)
+        assert D.numClasses > 1, "D must have 2 or more output channels, 2 for Binary Class"
         
-        self.eta, self.alpha = eta, alpha
-        self._initOptimizers()
+        self.hypers = {'lr':lr, 'momentum':momentum, 'batchSize':batchSize,
+                        'amntLab':amntLab, 'featMatch':featMatch, 
+                        'bayesianG':bayesianG, 'bayesianD':bayesianD,
+                        'genObserved':genObserved, 'lipPenalty':lipPenalty}
 
-    def _setMode(self):
-        if self.unl_train!=None and self.lab_train!=None: self.mode = "semi"
-        elif self.unl_train!=None: self.mode = "uns"
-        elif self.lab_train!=None: self.mode = "fully"
-        else: raise Exception("No viable dataloaders")
+        self.mode = self.getMode() #{"uns","semi","fully"}
+        self.d_optimizer, self.g_optimizer = self.initOptimizers()
+        self.lab_iter, self.dev_iter, self.test_iter, self.unl_iter \
+                    = self.getDataIters(datasets, batchSize, amntLab)
         
+    def getMode(self):
+        if self.hypers['amntLab']==0: mode = "uns"
+        elif self.hypers['amntLab']==1: mode = "fully"
+        else: mode = "semi"
+        return mode
 
-    def _initOptimizers(self):
+    def initOptimizers(self):
+        d_optim = optim.Adam(self.D.parameters(),
+            lr=self.hypers['lr'], betas=(self.hypers['momentum'], 0.999))
+
+        g_optim = optim.Adam(self.G.parameters(), 
+            lr=self.hypers['lr'], betas=(self.hypers['momentum'], 0.999))
+        return d_optim, g_optim
+
+    def loss(self, x_unlab, x_lab, y_lab):
         """
-        Initializes the optimizers for BGAN.
         """
-        if self.MAP:
-            self.g_optimizer = optim.Adam(self.G.parameters(), 
-                lr=self.eta, betas=(0.5, 0.999))
-        else: self.g_optimizer = optim.Adam(self.G.parameters(), 
-                lr=self.eta, betas=(1-self.alpha, 0.999))
-
-        self.d_optimizer = optim.Adam(self.D.parameters(),
-            lr=self.eta, betas=(0.5, 0.999))
-
-    def loss(self, x_unlab = None, x_lab = None, y_lab = None):
-        """
-        Computes the losses for the biven batch of data samples.
-
-        Args:
-            x_real: `torch.FloatTensor` of shape `(batch_size, x_dim)`; data
-                samples
-            y_real: 'torch.FloatTensor' of shape '(batch_size, K+1)'; data
-                labels
-            x_unlabeled: torch.FloatTensor` of shape `(batch_size, x_dim)`; data
-                unlabeled samples
+        # TODO: decouple the batch sizes for possible adjustments
+        if self.mode != 'fully': batch_size = x_unlab.size()[0]
+        else: batch_size = x_lab.size()[0]
         
-        Returns:
-            D_loss: float, discriminator loss
-            G_loss: float, generator loss
-        """
-        batch_size = x_unlab.size()[0]
-        x_fake = self.sample(batch_size).cuda()
-        
-
-        logSoftMax = nn.LogSoftmax()
-
+        x_fake = self.sample(batch_size)
+        fake_logits = self.D(x_fake)
+        logSoftMax = nn.LogSoftmax(dim=1)
         # Losses for generated samples are -log P(y=K+1|x)
-        fake_losses = -1*logSoftMax(self.D(x_fake))[:,self.D.K]
-        
+        fake_losses = -1*logSoftMax(fake_logits)[:,self.D.numClasses-1]
+
+        unl_losses, lab_losses = 0, 0
         if self.mode!="fully":# Losses for unlabeled samples are -log(1-P(y=K+1|x))
-            unl_losses =  -1*logOneMinusSoftmax(self.D(x_unlab))[:,self.D.K]
-        else: unl_losses = 0
+            x_real = x_unlab; real_logits = self.D(x_real)
+            unl_losses =  -1*logOneMinusSoftmax(real_logits)[:,self.D.numClasses-1]
 
         if self.mode!="uns": # Losses for labeled samples are -log(P(y=yi|x))
-            lab_losses = -1*logSoftMax(self.D(x_lab))[:,y_lab]
-        else: lab_losses = 0
-
+            x_real = x_lab; real_logits = self.D(x_lab)
+            lab_losses = nn.CrossEntropyLoss(reduce=False)(real_logits,y_lab)
+        
         #discriminator loss
-        d_loss = torch.sum(fake_losses + unl_losses + lab_losses)/batch_size
+        d_loss = torch.mean(fake_losses + unl_losses + lab_losses)
+        if self.hypers['lipPenalty']:
+            d_loss += self.lipschitzPenalty(x_unlab, x_fake, real_logits, fake_logits)
 
-        # minimax game loss
-        #g_losses = -1*fake_losses
-        #generator loss (non-saturating loss) -log(1-P(y=K+1|x))
-        g_losses = -1*logOneMinusSoftmax(self.D(x_fake))[:,self.D.K]
-        g_loss = torch.sum(g_losses)/batch_size
+        if self.hypers['featMatch']:
+            if self.mode=="fully": x_comp = x_lab
+            else: x_comp = x_unlab
+            real_features = torch.mean(self.D(x_comp, getFeatureVec=True),0)
+            fake_features = torch.mean(self.D(x_fake, getFeatureVec=True),0)
+            g_loss = 1000*torch.mean(torch.abs(real_features-fake_features))
+        else: #generator loss (non-saturating loss) -log(1-P(y=K+1|x))
+            g_losses = -1*logOneMinusSoftmax(fake_logits)[:,self.D.numClasses-1]
+            g_loss = torch.mean(g_losses)
 
-        if not self.MAP:
-            observed_gen = 20000 # What is this hyperparameter doing?
-            noise_std = np.sqrt(2 * self.alpha * self.eta)
-            g_loss += (self.noiseLoss(self.G, noise_std) / 
-                    (observed_gen * self.eta))
+        if self.hypers['bayesianG']:
+            g_loss += self.sghmcNoiseLoss(self.G)
+        if self.hypers['bayesianD']:
+            d_loss += self.sghmcNoiseLoss(self.D)
 
         return d_loss, g_loss
-        
-    @staticmethod
-    def noiseLoss(model, std):
-        """
-        Multiplies all the variables by a normal rv for SGHMC.
 
-        Args:
-            std: float, standard deviation of the noise
+    def lipschitzPenalty(self,x_real,x_fake,real_logits,fake_logits):
+        imgDists = (x_real - x_fake).view(x_real.size(0),-1).norm(p=2,dim=1)
+        logitDists = (real_logits - fake_logits).norm(p=1,dim=1)
+        oneSided = F.relu(logitDists/imgDists -1)
+        penalty = torch.mean(oneSided*oneSided)
+        return penalty
         
-        Returns:
-            loss: float, sum of all parameters of the model multiplied by noise
-        """
+    def sghmcNoiseLoss(self, model):
+        noise_std = np.sqrt(2 * (1-self.hypers['momentum']) * self.hypers['lr'])
+        std = torch.from_numpy(np.array([noise_std])).float().cuda()[0]
         loss = 0
-        std = torch.from_numpy(np.array([std])).float().cuda()
-        std = std[0]
         for param in model.parameters():
             means = torch.zeros(param.size()).cuda()
             n = Variable(torch.normal(means, std=std).cuda())
             loss += torch.sum(n * param)
-        return loss
+        corrected_loss = loss / (self.hypers['genObserved'] * self.hypers['lr'])
+        return corrected_loss
     
+    def getNoise(self, n_samples=1):
+        return Variable(torch.randn(n_samples, self.G.z_dim).cuda())
+
     def sample(self, n_samples=1):
-        """
-        Samples from BGAN generator.
-
-        Args:
-            n_samples: int, number of samples to produce
-        Returns:
-            `torch` variable containing `torch.FloatTensor` of shape 
-                `(n_samles, z_dim)`
-        """
-        z = torch.randn(n_samples, self.G.z_dim)
-        zv = Variable(z.cuda())
-        return self.G(zv)
+        return self.G(self.getNoise(n_samples))
         
-    def step(self, x_real = None, y_real = None, x_unlab = None):
-        """
-        Makes an SGHMC step for the parameters of BGAN. 
-
-        Args:
-            x_batch: `torch.FloatTensor` of shape `(batch_size, x_dim)`; data
-                samples
-        """
+    def step(self, x_unlab, x_lab, y_lab):
+        tensors = tuple(map(to_var_gpu,(x_unlab,x_lab,y_lab)))
         self.D.zero_grad()
         self.G.zero_grad()
-        d_loss, g_loss = self.loss(x_real,y_real,x_unlab)
+        d_loss, g_loss = self.loss(*tensors)
         d_loss.backward(retain_graph=True)
         self.d_optimizer.step()
-        
         g_loss.backward()
-        self.g_optimizer.step()        
+        self.g_optimizer.step()
+        return d_loss, g_loss
         
-    def train(self, epochs=100):
-        if self.mode == "uns":
-            self.unsupervisedTrain(epochs)
-        else: raise Exception('Semisupervised and supervised modes not yet written')
-    
-    def semiTrain(self, epochs):
-        print("semisupervised?")
-        return
-        # labeled_iterator = iter(self.lab_trainloader)
-        # dev_iterator = iter(self.devloader)
-        # for epoch in range(epochs):
-        #     for i, unlabeled_data in enumerate(self.unl_trainloader):
+    def batchPredAcc(self, x_real, y_real):
+        x_real, y_real = to_var_gpu(x_real), to_var_gpu(y_real)
+        self.D.eval()
+        fullLogits = self.D(x_real)
+        # Exclude the logits for generated class in predictions
+        notFakeLogits = fullLogits[:,:self.D.numClasses-1]
+        predictions = notFakeLogits.max(1)[1].type_as(y_real)
+        correct = predictions.eq(y_real).cpu().data.numpy().mean()
+        self.D.train()
+        return correct
 
-        #         x_unlabeled = Variable(unlabeled_data[0].cuda())
-        #         x_lab, y_lab = labeled_iterator.next()
-        #         x_lab, y_lab = Variable(x_lab.cuda()), Variable(y_lab.cuda())
+    def train(self, numEpochs = 100):
+        self.writeHypers()
+        print("Starting "+self.mode+"Supervised Training")
+        fixedNoise = self.getNoise(32)
+        cdev_iter = itertools.cycle(self.dev_iter)
 
-        #         self.step(x_unlabeled,x_lab,ylab)
+        numBatchesPerEpoch = max(len(self.unl_iter),len(self.lab_iter))
+        numSteps = numEpochs*numBatchesPerEpoch
 
-    def unsupervisedTrain(self, epochs):
-        losses = np.empty((0,2)) # losses = [Dloss,Gloss]
-        for epoch in range(epochs):
-            for i, unlabeled_data in enumerate(self.unl_train):
-                x_unlabeled = Variable(unlabeled_data[0].cuda())
-                self.step(x_unlabeled)
+        for step in range(numSteps):
+            # Get the input data and run optimizer step
+            x_unlab, _ = next(self.unl_iter)
+            x_lab, y_lab = next(self.lab_iter)
+            dloss, gloss = self.step(x_unlab, x_lab, y_lab)
 
-                if i%101==0:
-                    getMean = lambda ell: ell.cpu().data.numpy().mean(axis=0)
-                    batchLosses = np.array(list(map(getMean, self.loss(x_unlabeled)))).reshape(1,2)
-                    losses = np.concatenate((losses,batchLosses))
+            if step%100==0:
+                # Add logging data to tensorboard writer
+                logData = { 'G_loss': gloss.cpu().data[0],
+                            'D_loss': dloss.cpu().data[0],}
+                if self.mode!="uns":
+                    logData['Train_Acc'] = self.batchPredAcc(x_lab, y_lab)
+                    logData['Val_Acc'] = self.batchPredAcc(*next(cdev_iter))
+                self.writer.add_scalars('metrics', logData, step)
+            
+            if step%1000==0:
+                # Print the logdata and write out generated images (on fixed noise)
+                epoch = step / numBatchesPerEpoch
+                prettyPrintLog(logData, epoch, numEpochs, step, numSteps)
+                fakeImages = self.G(fixedNoise).cpu().data
+                self.writer.add_image('fake_samples', 
+                        vutils.make_grid(fakeImages, normalize=True), step)
+        if self.mode!=uns: print('Devset Acc: %.3f'%self.getDevsetAccuracy())       
 
-                if i%500==0:
-                    d_loss,g_loss = losses[-1] 
-                    print("[%3d/%d][%4d/%d] Loss_D: %.4f \
-                    Loss_G: %.4f" %(epoch,epochs,i,len(self.unl_train),d_loss,g_loss))
-
-            if epoch%3==0:
-                tutils.save_image(self.sample(8).data, '%s/fake_samples_epoch_%03d.png'\
-                            %(self.save_dir,epoch),normalize=True)
-
-                
-                

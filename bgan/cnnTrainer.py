@@ -3,73 +3,90 @@ import numpy as np
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
-import torchvision.utils as tutils
-import os
+import tensorboardX
+from torch.utils.data import DataLoader
+from bgan.utils import to_var_gpu, prettyPrintLog
+from bgan.dataloaders import getUandLloaders
+import torch.nn.functional as F
 import itertools
+import shutil
+import copy
 
 class CnnTrainer:
     
-    def __init__(self, CNN, dataloaders, save_dir, eta=2e-4):
+    def __init__(self, CNN, datasets, save_dir, lr=2e-4, lab_BS=32, ul_BS=32,
+                amntLab=1):
+        shutil.rmtree(save_dir, ignore_errors=True) # Make clean
+        self.writer = tensorboardX.SummaryWriter(save_dir)
 
+        assert torch.cuda.is_available(), "CUDA or GPU not working"
         self.CNN = CNN.cuda()
+        self.writer.add_text('ModelSpec','CNN: '+type(CNN).__name__)
 
-        (self.lab_train, self.dev, self.test) = dataloaders
+        # Init hyperparameter dictionary
+        self.hypers = {'lr':lr, 'amntLab':amntLab, 'lab_BS':lab_BS, 'ul_BS':ul_BS}
+        self.optimizer = optim.Adam(self.CNN.parameters(),lr=lr)
+        self.lab_train, self.dev, self.test, self.unl_train \
+                    = self.getDataLoaders(datasets,lab_BS,ul_BS,amntLab)
 
-        self.save_dir = save_dir
-        os.makedirs(save_dir, exist_ok=True)
-        
-        self.eta = eta
-        self.optimizer = optim.Adam(self.CNN.parameters(),lr=self.eta)
-
+    def getDataLoaders(self, datasets, lab_BS, ul_BS, amntLab):
+        trainset, devset, testset = datasets
+        unl_loader, lab_loader = getUandLloaders(trainset,amntLab,lab_BS,ul_BS,num_workers=0)
+        dev_loader = DataLoader(devset, batch_size = 64, num_workers = 0)
+        test_loader = DataLoader(testset, batch_size = 64, num_workers = 0)
+        return lab_loader, dev_loader, test_loader, unl_loader
 
     def loss(self, x, y):
-        # batch_size = x.size()[0]
-        # batchIndices = torch.arange(0,batch_size).type_as(y.data)
-        # logSoftMax = nn.LogSoftmax(dim=1)
-        # lab_losses = -1*logSoftMax(self.CNN(x))[batchIndices,y]
-        # loss = torch.mean(lab_losses)
-        
         # Losses for labeled samples are -log(P(y=yi|x))
         loss = nn.CrossEntropyLoss()(self.CNN(x),y)
         return loss
-    
 
-    def step(self, x, y):
-
+    def step(self, *data):
+        varData = tuple(map(to_var_gpu, data))
         self.optimizer.zero_grad()
-        l = self.loss(x,y)
-        l.backward()
+        loss = self.loss(*varData)
+        loss.backward()
         self.optimizer.step()
+        return loss
          
     def batchAccuracy(self, x, y):
+        x, y = to_var_gpu(x),  to_var_gpu(y)
+        self.CNN.eval()
         predictions = self.CNN(x).max(1)[1].type_as(y)
         correct = predictions.eq(y).cpu().data.numpy().mean()
+        self.CNN.train()
         return correct
+    
+    def getDevsetAccuracy(self):
+        accSum = 0
+        for xy in self.dev:
+            accSum += self.batchAccuracy(*xy)
+        acc = accSum / len(self.dev)
+        self.writer.add_text('metrics','Devset_Accuracy: = %.3f'%acc)
+        return acc
 
-    def train(self, epochs=100):
-        datalog = np.empty((0,3)) # losses = [Dloss,Gloss]
-        deviter = itertools.cycle(iter(self.dev))
+    def writeHypers(self):
+        for tag, value in self.hypers.items():
+            self.writer.add_text('ModelSpec',tag+' = '+str(value))
 
-        for epoch in range(epochs):
-            for i, data in enumerate(self.lab_train):
-                x = Variable(data[0].cuda())
-                y = Variable(data[1].cuda().long().squeeze())
-                self.step(x,y)
-
-                if i%100==0:
-                    batchTrainingLoss = self.loss(x,y).cpu().data.numpy().mean()
-                    batchTrainAcc = self.batchAccuracy(x,y)
-                    
-                    xdev, ydev = next(deviter)
-                    xdev, ydev = Variable(xdev.cuda()), Variable(ydev.cuda().long().squeeze())
-                    batchDevAcc = self.batchAccuracy(xdev,ydev)
-                    datalog = np.concatenate((datalog,np.array([batchTrainingLoss,batchTrainAcc,batchDevAcc])[None,:]))
-
-            if epoch%1==0:
-                nowData = np.mean(datalog[-7:],axis=0)
-                print("[%3d/%d][%4d/%d] Train Loss: %.4f    Train Acc: %.3f   Test Acc: %.3f"
-                    %(epoch,epochs,i,len(self.lab_train),nowData[0],nowData[1],nowData[2]))
-
-        # todo: abstract loss & accuracy into data logger
-        # write evaluation method with network in (eval) mode (for dropout)  
-                
+    def train(self, numEpochs=100):
+        self.writeHypers()
+        numBatchesPerEpoch = len(self.lab_train)
+        numSteps = numEpochs*numBatchesPerEpoch
+        lab_iter = iter(self.lab_train)
+        cycle_dev_iter = itertools.cycle(self.dev)
+        # Get the input data and run optimizer step
+        for step in range(numSteps):
+            x, y = next(lab_iter)
+            batchLoss = self.step(x, y)
+            if step%100==0:
+                # Add logging data to tensorboard writer
+                logData = {
+                    'Training_Loss':batchLoss.cpu().data[0],
+                    'Train_Acc':self.batchAccuracy(x, y),
+                    'Val_Acc':self.batchAccuracy(*next(cycle_dev_iter)),}
+                self.writer.add_scalars('metrics', logData, step)
+            if step%1000==0:
+                epoch = step / numBatchesPerEpoch
+                prettyPrintLog(logData, epoch, numEpochs, step, numSteps)
+        print('Devset Acc: %.3f'%self.getDevsetAccuracy())
