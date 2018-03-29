@@ -9,14 +9,14 @@ import tensorboardX
 import itertools
 from bgan.utils import to_var_gpu, prettyPrintLog, logOneMinusSoftmax
 from bgan.cnnTrainer import CnnTrainer
-
+import copy
 
 class GanTrainer(CnnTrainer):
     
-    def __init__(self, G, D, datasets, amntLab, save_dir, batchSize = 64, 
-                    lr=1e-4, momentum=.5, featMatch = False, 
+    def __init__(self, G, D, datasets, save_dir,  lr=1e-4, momentum=.5, 
+                    ul_BS = 32, lab_BS = 32, featMatch = False, 
                     bayesianG = False, bayesianD = False, genObserved=50000,
-                    lipPenalty = False):
+                    amntLab = 0, swa = False):
         """ Creates a Bayesian GAN for generator G, discriminator D, and optimizer O.
         """
         self.writer = tensorboardX.SummaryWriter(save_dir)
@@ -24,17 +24,17 @@ class GanTrainer(CnnTrainer):
         assert torch.cuda.is_available(), "CUDA or GPU working"
         self.G = G.cuda(); self.writer.add_text('ModelSpec','Generator: '+type(G).__name__)
         self.D = D.cuda(); self.writer.add_text('ModelSpec','Discriminator: '+type(D).__name__)
-        assert D.numClasses > 1, "D must have 2 or more output channels, 2 for Binary Class"
+        #assert D.numClasses > 1, "D must have 2 or more output channels, 2 for Binary Class"
         
-        self.hypers = {'lr':lr, 'momentum':momentum, 'batchSize':batchSize,
+        self.hypers = {'lr':lr, 'momentum':momentum, 'ul_BS':ul_BS, 'lab_BS':lab_BS,
                         'amntLab':amntLab, 'featMatch':featMatch, 
                         'bayesianG':bayesianG, 'bayesianD':bayesianD,
-                        'genObserved':genObserved, 'lipPenalty':lipPenalty}
+                        'genObserved':genObserved, 'swa':swa}
 
         self.mode = self.getMode() #{"uns","semi","fully"}
         self.d_optimizer, self.g_optimizer = self.initOptimizers()
-        self.lab_iter, self.dev_iter, self.test_iter, self.unl_iter \
-                    = self.getDataIters(datasets, batchSize, amntLab)
+        self.lab_train, self.dev, self.test, self.unl_train \
+                    = self.getDataLoaders(datasets,lab_BS,ul_BS,amntLab)
         
     def getMode(self):
         if self.hypers['amntLab']==0: mode = "uns"
@@ -54,10 +54,7 @@ class GanTrainer(CnnTrainer):
         """
         """
         # TODO: decouple the batch sizes for possible adjustments
-        if self.mode != 'fully': batch_size = x_unlab.size()[0]
-        else: batch_size = x_lab.size()[0]
-        
-        x_fake = self.sample(batch_size)
+        x_fake = self.sample(self.hypers['ul_BS'])
         fake_logits = self.D(x_fake)
         logSoftMax = nn.LogSoftmax(dim=1)
         # Losses for generated samples are -log P(y=K+1|x)
@@ -68,14 +65,15 @@ class GanTrainer(CnnTrainer):
             x_real = x_unlab; real_logits = self.D(x_real)
             unl_losses =  -1*logOneMinusSoftmax(real_logits)[:,self.D.numClasses-1]
 
-        if self.mode!="uns": # Losses for labeled samples are -log(P(y=yi|x))
-            x_real = x_lab; real_logits = self.D(x_lab)
-            lab_losses = nn.CrossEntropyLoss(reduce=False)(real_logits,y_lab)
+        if self.mode!="uns": # Losses for labeled samples are -log(P(y=yi|x,y!=K+1))
+            logits = self.D(x_lab)[:,:self.D.numClasses-1] # conditioning on not fake
+            lab_losses = nn.CrossEntropyLoss(reduce=False)(logits,y_lab)
         
         #discriminator loss
         d_loss = torch.mean(fake_losses + unl_losses + lab_losses)
-        if self.hypers['lipPenalty']:
-            d_loss += self.lipschitzPenalty(x_unlab, x_fake, real_logits, fake_logits)
+        #generator loss (non-saturating loss) -log(1-P(y=K+1|x))
+        g_losses = -1*logOneMinusSoftmax(fake_logits)[:,self.D.numClasses-1]
+        g_loss = torch.mean(g_losses)
 
         if self.hypers['featMatch']:
             if self.mode=="fully": x_comp = x_lab
@@ -83,9 +81,6 @@ class GanTrainer(CnnTrainer):
             real_features = torch.mean(self.D(x_comp, getFeatureVec=True),0)
             fake_features = torch.mean(self.D(x_fake, getFeatureVec=True),0)
             g_loss = 1000*torch.mean(torch.abs(real_features-fake_features))
-        else: #generator loss (non-saturating loss) -log(1-P(y=K+1|x))
-            g_losses = -1*logOneMinusSoftmax(fake_logits)[:,self.D.numClasses-1]
-            g_loss = torch.mean(g_losses)
 
         if self.hypers['bayesianG']:
             g_loss += self.sghmcNoiseLoss(self.G)
@@ -94,12 +89,6 @@ class GanTrainer(CnnTrainer):
 
         return d_loss, g_loss
 
-    def lipschitzPenalty(self,x_real,x_fake,real_logits,fake_logits):
-        imgDists = (x_real - x_fake).view(x_real.size(0),-1).norm(p=2,dim=1)
-        logitDists = (real_logits - fake_logits).norm(p=1,dim=1)
-        oneSided = F.relu(logitDists/imgDists -1)
-        penalty = torch.mean(oneSided*oneSided)
-        return penalty
         
     def sghmcNoiseLoss(self, model):
         noise_std = np.sqrt(2 * (1-self.hypers['momentum']) * self.hypers['lr'])
@@ -144,26 +133,30 @@ class GanTrainer(CnnTrainer):
         self.writeHypers()
         print("Starting "+self.mode+"Supervised Training")
         fixedNoise = self.getNoise(32)
-        cdev_iter = itertools.cycle(self.dev_iter)
-
-        numBatchesPerEpoch = max(len(self.unl_iter),len(self.lab_iter))
+        cdev_iter = itertools.cycle(self.dev)
+        unl_iter = iter(self.unl_train)
+        lab_iter = iter(self.lab_train)
+        numBatchesPerEpoch = max(len(self.unl_train),len(self.lab_train))
         numSteps = numEpochs*numBatchesPerEpoch
 
         for step in range(numSteps):
             # Get the input data and run optimizer step
-            x_unlab, _ = next(self.unl_iter)
-            x_lab, y_lab = next(self.lab_iter)
-            dloss, gloss = self.step(x_unlab, x_lab, y_lab)
-
+            x_unlab, _ = next(unl_iter)
+            x_lab, y_lab = next(lab_iter)
+            dloss, gloss = self.step(x_unlab, x_lab, y_lab)          
             if step%100==0:
+                x_dev, y_dev = next(cdev_iter)
                 # Add logging data to tensorboard writer
                 logData = { 'G_loss': gloss.cpu().data[0],
                             'D_loss': dloss.cpu().data[0],}
                 if self.mode!="uns":
                     logData['Train_Acc'] = self.batchPredAcc(x_lab, y_lab)
-                    logData['Val_Acc'] = self.batchPredAcc(*next(cdev_iter))
+                    logData['Val_Acc'] = self.batchPredAcc(x_dev, y_dev)
+                if self.hypers['swa']:
+                    logData['SWA_trainAcc'] = self.swaBatchPredAcc(x_lab, y_lab, train=True)
+                    logData['SWA_valAcc'] = self.swaBatchPredAcc(x_dev, y_dev, train=False)
                 self.writer.add_scalars('metrics', logData, step)
-            
+
             if step%1000==0:
                 # Print the logdata and write out generated images (on fixed noise)
                 epoch = step / numBatchesPerEpoch
@@ -171,5 +164,12 @@ class GanTrainer(CnnTrainer):
                 fakeImages = self.G(fixedNoise).cpu().data
                 self.writer.add_image('fake_samples', 
                         vutils.make_grid(fakeImages, normalize=True), step)
-        if self.mode!=uns: print('Devset Acc: %.3f'%self.getDevsetAccuracy())       
+                
 
+        if self.mode!="uns": print('Devset Acc: %.3f'%self.getDevsetAccuracy())       
+
+    def getInceptionScore(self):
+        pass
+    
+    def getFIDscore(self):
+        pass

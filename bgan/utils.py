@@ -5,7 +5,7 @@ from torch.distributions import Distribution
 
 def to_var_gpu(x):
     if x is None: return None
-    else: return Variable(x.cuda())
+    else: return Variable(x).cuda()
 
 def prettyPrintLog(logDict, *epochIts):
     formatStr = "[%3d/%d][%6d/%d] "

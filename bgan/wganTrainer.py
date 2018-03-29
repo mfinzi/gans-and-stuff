@@ -2,75 +2,48 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.optim as optim
-from torch.autograd import Variable
+from torch.autograd import Variable, grad
 from bgan.ganTrainer import GanTrainer
+from bgan.utils import to_var_gpu
 
 class WganTrainer(GanTrainer):
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-    
+    def __init__(self, *args, gradPenalty=10, n_critic=1, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.hypers.update({'gradPenalty':gradPenalty, 'n_critic':n_critic})
 
-    def loss(self, x_unlab = None, x_lab = None, y_lab = None):
-        """
-        """
-        # TODO: decouple the batch sizes for possible adjustments
-        if self.mode != 'fully': batch_size = x_unlab.size()[0]
-        else: batch_size = x_lab.size()[0]
+    def step(self, x_unlab, *_):
+        x_unlab = to_var_gpu(x_unlab)
+        for _ in range(self.hypers['n_critic']):
+            self.d_optimizer.zero_grad()
+            z = self.getNoise(self.hypers["ul_BS"]) #*.1
+            x_fake = self.G(z).detach()
+            wass_loss = self.D(x_fake).mean() - self.D(x_unlab).mean()
+            d_loss = wass_loss + self.grad_penalty(x_unlab, x_fake)
+            d_loss.backward()
+            self.d_optimizer.step()
         
-        x_fake = self.sample(batch_size)
-        fake_logits = self.D(x_fake)
-        unl_logits = self.D(x_unlab)
-        lab_logits = self.D(x_lab)
-        # Losses for generated samples are -log P(y=K+1|x)
-        fake_loss = torch.mean(fake_logits[:,self.D.numClasses-1])
-
-        
-
-        unl_losses, lab_losses = 0, 0
-        if self.mode!="uns": # Losses for labeled samples are -log(P(y=yi|x))
-            lab_losses = self.labeledLoss(self, lab_logits, y_lab)
-        
-        if self.mode!="fully":# Losses for unlabeled samples are -log(1-P(y=K+1|x))
-            unl_losses = 0
-
-        
-        
-        #discriminator loss
-        d_loss = torch.mean(fake_losses + unl_losses + lab_losses)
-
-        if self.hypers['featMatch']:
-            if self.mode=="fully": x_comp = x_lab
-            else: x_comp = x_unlab
-            real_features = torch.mean(self.D(x_comp, getFeatureVec=True),0)
-            fake_features = torch.mean(self.D(x_fake, getFeatureVec=True),0)
-            g_loss = 1000*torch.mean(torch.abs(real_features-fake_features))
-        else: #generator loss (non-saturating loss) -log(1-P(y=K+1|x))
-            g_losses = -1*logOneMinusSoftmax(fake_logits)[:,self.D.numClasses-1]
-            g_loss = torch.mean(g_losses)
-
-        if self.hypers['bayesian']:
-            noise_std = np.sqrt(2 * (1-self.hypers['momentum']) * self.hypers['lr'])
-            g_loss += (self.noiseLoss(self.G, noise_std) / 
-                    (self.hypers['genObserved'] * self.hypers['lr']))
-
+        self.g_optimizer.zero_grad()
+        z = self.getNoise(self.hypers["ul_BS"]) #*.1
+        x_fake = self.G(z)
+        g_loss = -self.D(x_fake).mean()
+        g_loss.backward()
+        self.g_optimizer.step()
         return d_loss, g_loss
 
     def grad_penalty(self,x_real,x_fake):
-        # Same as in wgan gp paper
-        # randomly sample on lines connecting real and fake samples
-        beta = torch.rand(x_real.size())
-        if self.cuda: beta = beta.cuda()
-        interpolates = beta * x_real + (1-beta)*x_fake
-        if self.cuda: interpolates = interpolates.cuda()
-        interpolates = Variable(interpolates, requires_grad = True)
+        assert x_real.size()==x_fake.size(), "real and fake dims don't match"
 
-        disc_interpolates = self.discriminator(interpolates)
+        alpha = torch.rand(self.hypers['ul_BS'],1,1,1)
+        alpha = Variable(alpha.expand_as(x_real).cuda(),requires_grad=False)
+        interpolates = alpha * x_real + (1 - alpha) * x_fake
+        interpolates = Variable(interpolates.data, requires_grad=True)
+        disc_interpolates = self.D(interpolates)
         gradients = grad(outputs=disc_interpolates, inputs=interpolates,
-                            grad_outputs=torch.ones(disc_interpolates.size()).cuda() if self.cuda else torch.ones(
-                                disc_interpolates.size()),
-                            create_graph=True, retain_graph=True, only_inputs=True)[0]
+                                    grad_outputs=torch.ones(disc_interpolates.size()).cuda(),
+                                    create_graph=True, retain_graph=True, only_inputs=True)[0]
         gradients = gradients.view(gradients.size(0), -1)
-
-        gradient_penalty = ((gradients.norm(2,dim=1)-1)**2).mean()
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * self.hypers['gradPenalty']
         return gradient_penalty
+
+    
