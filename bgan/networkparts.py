@@ -4,6 +4,7 @@ from torch.nn import Parameter
 import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
+from torch.nn.utils import weight_norm
 # weight init is automatically done in the module initialization
 # see https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/conv.py
 def weight_init_he(m):
@@ -96,17 +97,28 @@ class BadGanDbn(nn.Module):
         if getFeatureVec: return self.feature_net(x)
         else: return self.core_net(x)
 
-class GaussianNoise(nn.Module):
-    def __init__(self, sigma):
-        super(GaussianNoise, self).__init__()
-        self.sigma = sigma
+# class GaussianNoise(nn.Module):
+#     def __init__(self, sigma):
+#         super(GaussianNoise, self).__init__()
+#         self.sigma = sigma
 
-    def forward(self, inpt):
-        if self.training:
-            noise = Variable(inpt.data.new(inpt.size()).normal_(std=self.sigma))
-            return inpt + noise
-        else:
-            return inpt
+#     def forward(self, inpt):
+#         if self.training:
+#             noise = Variable(inpt.data.new(inpt.size()).normal_(std=self.sigma))
+#             return inpt + noise
+#         else:
+#             return inpt
+
+class GaussianNoise(nn.Module):
+    
+    def __init__(self, std):
+        super(GaussianNoise, self).__init__()
+        self.std = std
+    
+    def forward(self, x):
+        zeros_ = torch.zeros(x.size()).cuda()
+        n = Variable(torch.normal(zeros_, std=self.std).cuda())
+        return x + n
 
 class BadGanDbn2(nn.Module):
     
@@ -194,13 +206,15 @@ class BadGanDon(nn.Module):
         else: return self.core_net(x)
 
 
+def doubleUnsqueeze(tensor): 
+    return tensor.unsqueeze(2).unsqueeze(3)
 
 class DCganG(nn.Module):
     def __init__(self, d=64, z_dim=100):
         super().__init__()
         self.z_dim = z_dim
         self.core_net = nn.Sequential(
-            Expression(lambda tensor: tensor.unsqueeze(2).unsqueeze(3)),
+            Expression(doubleUnsqueeze),
             nn.ConvTranspose2d(z_dim,4*d,4,1,0), nn.BatchNorm2d(4*d), nn.ReLU(),
             nn.ConvTranspose2d(  4*d,2*d,4,2,1), nn.BatchNorm2d(2*d), nn.ReLU(),
             nn.ConvTranspose2d(  2*d,  d,4,2,1), nn.ReLU(),
@@ -224,26 +238,69 @@ class DCganD(nn.Module):
     def forward(self, x):
         return self.core_net(x)
 
-class DCganDv2(nn.Module):
-    def __init__(self, d=64, numClasses=2):
+
+  
+class layer13(nn.Module):
+    """
+    CNN from Mean Teacher paper
+    """
+    
+    def __init__(self, numClasses=10):
         super().__init__()
         self.numClasses = numClasses
-        self.feature_net = nn.Sequential(
-            nn.Conv2d(  3,  d,4,2,1),                      nn.LeakyReLU(0.2),
-            nn.Conv2d(  d,2*d,4,2,1), nn.BatchNorm2d(2*d), nn.LeakyReLU(0.2),
-            nn.Conv2d(2*d,4*d,4,2,1), nn.BatchNorm2d(4*d), nn.LeakyReLU(0.2),
-            Expression(lambda tensor: tensor.mean(3).mean(2).squeeze()),
-        )
-        self.core_net = nn.Sequential(
-            self.feature_net,
-            nn.Linear(4*d,self.numClasses),
-        )
+        self.gn = GaussianNoise(0.15)
+        self.activation = nn.LeakyReLU(0.1)
+        self.conv1a = weight_norm(nn.Conv2d(3, 128, 3, padding=1))
+        self.bn1a = nn.BatchNorm2d(128)
+        self.conv1b = weight_norm(nn.Conv2d(128, 128, 3, padding=1))
+        self.bn1b = nn.BatchNorm2d(128)
+        self.conv1c = weight_norm(nn.Conv2d(128, 128, 3, padding=1))
+        self.bn1c = nn.BatchNorm2d(128)
+        self.mp1 = nn.MaxPool2d(2, stride=2, padding=0)
+        self.drop1  = nn.Dropout(0.5)
+        
+        self.conv2a = weight_norm(nn.Conv2d(128, 256, 3, padding=1))
+        self.bn2a = nn.BatchNorm2d(256)
+        self.conv2b = weight_norm(nn.Conv2d(256, 256, 3, padding=1))
+        self.bn2b = nn.BatchNorm2d(256)
+        self.conv2c = weight_norm(nn.Conv2d(256, 256, 3, padding=1))
+        self.bn2c = nn.BatchNorm2d(256)
+        self.mp2 = nn.MaxPool2d(2, stride=2, padding=0)
+        self.drop2  = nn.Dropout(0.5)
+        
+        self.conv3a = weight_norm(nn.Conv2d(256, 512, 3, padding=0))
+        self.bn3a = nn.BatchNorm2d(512)
+        self.conv3b = weight_norm(nn.Conv2d(512, 256, 1, padding=0))
+        self.bn3b = nn.BatchNorm2d(256)
+        self.conv3c = weight_norm(nn.Conv2d(256, 128, 1, padding=0))
+        self.bn3c = nn.BatchNorm2d(128)
+        self.ap3 = nn.AvgPool2d(6, stride=2, padding=0)
+        
+        self.fc1 =  weight_norm(nn.Linear(128, numClasses))
+    
     def forward(self, x, getFeatureVec=False):
-        if getFeatureVec: return self.feature_net(x)
-        else: return self.core_net(x)
-
-
-
+        if self.training:
+            x = self.gn(x)
+        x = self.activation(self.bn1a(self.conv1a(x)))
+        x = self.activation(self.bn1b(self.conv1b(x)))
+        x = self.activation(self.bn1c(self.conv1c(x)))
+        x = self.mp1(x)
+        x = self.drop1(x)
+        
+        x = self.activation(self.bn2a(self.conv2a(x)))
+        x = self.activation(self.bn2b(self.conv2b(x)))
+        x = self.activation(self.bn2c(self.conv2c(x)))
+        x = self.mp2(x)
+        x = self.drop2(x)
+        
+        x = self.activation(self.bn3a(self.conv3a(x)))
+        x = self.activation(self.bn3b(self.conv3b(x)))
+        x = self.activation(self.bn3c(self.conv3c(x)))
+        x = self.ap3(x)
+        
+        x = x.view(-1, 128)
+        if getFeatureVec: return x
+        else: return self.fc1(x)
 
 # cross entropy loss manual
 # batch_size = x.size()[0]
@@ -251,3 +308,4 @@ class DCganDv2(nn.Module):
 # # logSoftMax = nn.LogSoftmax(dim=1)
 # lab_losses = -1*logSoftMax(self.CNN(x))[batchIndices,y]
 # loss = torch.mean(lab_losses)
+

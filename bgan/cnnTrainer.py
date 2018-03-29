@@ -90,3 +90,17 @@ class CnnTrainer:
                 epoch = step / numBatchesPerEpoch
                 prettyPrintLog(logData, epoch, numEpochs, step, numSteps)
         print('Devset Acc: %.3f'%self.getDevsetAccuracy())
+
+    # def initSWA(self):
+    #     self.n = 0
+    #     self.SWA = copy.deepcopy(self.CNN)
+    
+    # def updateSWA(self):
+    #     n = self.n
+    #     for param1, param2 in zip(self.SWA.parameters(),self.CNN.parameters()):
+    #         param1.data = param1.data*n/(n+1) + param2.data/(n+1)
+    #     self.n+=1
+    #     # # Keep Running average of the weights, updated every epoch
+    #     #         if self.hypers['swa']:
+    #     #             self.updateSWA()
+    # if swa: self.initSWA()
