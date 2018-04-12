@@ -45,9 +45,10 @@ class VatCnnTrainer(CnnTrainer):
         return lab_loss + unlab_loss   
 
     def unlabLoss(self, x_unlab):
-        logits = self.CNN(x_unlab).detach()
-        r_adv = self.hypers['advEps'] * self.getAdvPert(self.CNN, x_unlab, logits)
+        r_adv = self.hypers['advEps'] * self.getAdvPert(self.CNN, x_unlab)
         perturbed_logits = self.CNN(x_unlab + r_adv)
+        logits = self.CNN(x_unlab).detach()
+
         if self.hypers['entMin']:
             criterion = cross_ent_withlogits
         else:
@@ -55,7 +56,8 @@ class VatCnnTrainer(CnnTrainer):
         return self.hypers['regScale']*criterion(logits, perturbed_logits)
 
     @staticmethod
-    def getAdvPert(model, X, logits, powerIts=1, xi=1e-6):
+    def getAdvPert(model, X, powerIts=1, xi=1e-6):
+        logits = model(X).detach()
         ddata = torch.randn(X.size()).cuda()
         # calc adversarial direction
         d = Variable(xi*_l2_normalize(ddata), requires_grad=True)

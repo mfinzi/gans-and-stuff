@@ -56,7 +56,12 @@ def classBalancedSampleIndices(y, numLabeled):
     uniqueVals = np.unique(y)
     numLabeled = np.floor(numLabeled / len(uniqueVals))*len(uniqueVals)
     classIndices = np.array([np.where(y==val) for val in uniqueVals])
-    sampledIndices = np.empty(numLabeled, dtype=np.int64)
 
-    sampledIndices = np.random.choice(classIndices)
+    sampledIndices = np.empty(numLabeled, dtype=np.int64)
+    samplesPerClass = numLabeled/len(uniqueVals)
+    for i in len(uniqueVals):
+        smpldClssIndcs = np.random.choice(classIndices[i],samplesPerClass,replace=False)
+        sampledIndices[i:i+samplesPerClass] = smpldClssIndcs
+    return sampledIndices
+    
     #TODO: Finish this
