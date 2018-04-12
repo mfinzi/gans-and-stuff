@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
 from torch.nn.utils import weight_norm
+from bgan.augLayers import GaussianNoise
 # weight init is automatically done in the module initialization
 # see https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/conv.py
 def weight_init_he(m):
@@ -96,29 +97,6 @@ class BadGanDbn(nn.Module):
     def forward(self, x, getFeatureVec=False):
         if getFeatureVec: return self.feature_net(x)
         else: return self.core_net(x)
-
-# class GaussianNoise(nn.Module):
-#     def __init__(self, sigma):
-#         super(GaussianNoise, self).__init__()
-#         self.sigma = sigma
-
-#     def forward(self, inpt):
-#         if self.training:
-#             noise = Variable(inpt.data.new(inpt.size()).normal_(std=self.sigma))
-#             return inpt + noise
-#         else:
-#             return inpt
-
-class GaussianNoise(nn.Module):
-    
-    def __init__(self, std):
-        super(GaussianNoise, self).__init__()
-        self.std = std
-    
-    def forward(self, x):
-        zeros_ = torch.zeros(x.size()).cuda()
-        n = Variable(torch.normal(zeros_, std=self.std).cuda())
-        return x + n
 
 class BadGanDbn2(nn.Module):
     
@@ -248,7 +226,6 @@ class layer13(nn.Module):
     def __init__(self, numClasses=10):
         super().__init__()
         self.numClasses = numClasses
-        self.gn = GaussianNoise(0.15)
         self.activation = nn.LeakyReLU(0.1)
         self.conv1a = weight_norm(nn.Conv2d(3, 128, 3, padding=1))
         self.bn1a = nn.BatchNorm2d(128)
@@ -279,8 +256,6 @@ class layer13(nn.Module):
         self.fc1 =  weight_norm(nn.Linear(128, numClasses))
     
     def forward(self, x, getFeatureVec=False):
-        if self.training:
-            x = self.gn(x)
         x = self.activation(self.bn1a(self.conv1a(x)))
         x = self.activation(self.bn1b(self.conv1b(x)))
         x = self.activation(self.bn1c(self.conv1c(x)))

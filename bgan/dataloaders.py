@@ -40,8 +40,9 @@ def getUandLloaders(trainset, amntLabeled, lab_BS, ul_BS, **kwargs):
         numLabeled *= len(trainset)
     
     indices = np.random.permutation(len(trainset))
+    labIndices = indices[:numLabeled]
 
-    labSampler = ShuffleCycleSubsetSampler(indices[:numLabeled])
+    labSampler = ShuffleCycleSubsetSampler(labIndices)
     labLoader = DataLoader(trainset,sampler=labSampler,batch_size=lab_BS,**kwargs)
     if amntLabeled == 0: labLoader = EmptyLoader()
 
@@ -50,3 +51,12 @@ def getUandLloaders(trainset, amntLabeled, lab_BS, ul_BS, **kwargs):
     unlabLoader = DataLoader(trainset,sampler=unlabSampler,batch_size=ul_BS,**kwargs)
         
     return unlabLoader, labLoader
+
+def classBalancedSampleIndices(y, numLabeled):
+    uniqueVals = np.unique(y)
+    numLabeled = np.floor(numLabeled / len(uniqueVals))*len(uniqueVals)
+    classIndices = np.array([np.where(y==val) for val in uniqueVals])
+    sampledIndices = np.empty(numLabeled, dtype=np.int64)
+
+    sampledIndices = np.random.choice(classIndices)
+    #TODO: Finish this

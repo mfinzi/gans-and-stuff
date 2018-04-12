@@ -2,10 +2,23 @@ import numpy as np
 import torch
 from torch.autograd import Variable, grad
 from torch.distributions import Distribution
+import numbers
 
 def to_var_gpu(x):
-    if x is None: return None
-    else: return Variable(x).cuda()
+    """ recursively map the elements to variables on gpu """
+    if x is None: 
+        return x
+    if type(x) in [list, tuple]:
+        return type(x)(map(to_var_gpu, x))
+    else: 
+        return Variable(x).cuda()
+
+def to_lambda(x):
+    """ Turns constants into constant functions """
+    if isinstance(x, numbers.Number):
+        return lambda e: x
+    else:
+        return x
 
 def prettyPrintLog(logDict, *epochIts):
     formatStr = "[%3d/%d][%6d/%d] "
