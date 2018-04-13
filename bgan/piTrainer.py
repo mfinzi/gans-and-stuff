@@ -9,20 +9,23 @@ from bgan.cnnTrainer import CnnTrainer
 from bgan.vatLDS import LDSloss, getAdvPert
 from bgan.utils import to_var_gpu, to_lambda, prettyPrintLog
 from bgan.losses import softmax_mse_loss
+from bgan.schedules import sigmoidConsRamp
 
 class PiTrainer(CnnTrainer):
-    def __init__(self, *args, cons_weight=100,
+    def __init__(self, *args, cons_weight=100, rampup_epochs=5,
                      **kwargs):
         def initClosure():
-            self.hypers.update({'cons_weight':to_lambda(cons_weight)})
+            self.hypers.update({'cons_weight':cons_weight,
+                                'rampup_epochs':rampup_epochs})
             self.train_iter = zip(iter(self.lab_train), iter(self.unl_train))
             self.numBatchesPerEpoch = len(self.unl_train)
+            self.consRamp = sigmoidConsRamp(rampup_epochs)
         super().__init__(*args, extraInit = initClosure, **kwargs)
  
     def unlabLoss(self, x_unlab):
         pred1 = self.CNN(x_unlab)
         pred2 = self.CNN(x_unlab)
-        cons_weight = self.hypers['cons_weight'](self.epoch)
+        weight = self.hypers['cons_weight']*self.consRamp(self.epoch)
         cons_loss =  cons_weight*softmax_mse_loss(pred1, pred2.detach())/self.hypers['ul_BS']
         return cons_loss
 
@@ -39,7 +42,7 @@ class PiTrainer(CnnTrainer):
     def logStuff(self, i, epoch, numEpochs, trainData):
         step = i + epoch*self.numBatchesPerEpoch
         if step%2000==0:
-            self.metricLog['Unlab_loss(batch)']:self.unlabLoss(trainData[1][0]).cpu().data[0]})
+            self.metricLog['Unlab_loss(batch)'] = self.unlabLoss(trainData[1][0]).cpu().data[0]
             current_weight = self.hypers['cons_weight'](self.epoch)
             self.scheduleLog['cons_weight'] = current_weight
         super().logStuff(i, epoch, numEpochs, trainData)

@@ -52,16 +52,35 @@ def getUandLloaders(trainset, amntLabeled, lab_BS, ul_BS, **kwargs):
         
     return unlabLoader, labLoader
 
-def classBalancedSampleIndices(y, numLabeled):
-    uniqueVals = np.unique(y)
-    numLabeled = np.floor(numLabeled / len(uniqueVals))*len(uniqueVals)
-    classIndices = np.array([np.where(y==val) for val in uniqueVals])
-
-    sampledIndices = np.empty(numLabeled, dtype=np.int64)
-    samplesPerClass = numLabeled/len(uniqueVals)
-    for i in len(uniqueVals):
-        smpldClssIndcs = np.random.choice(classIndices[i],samplesPerClass,replace=False)
-        sampledIndices[i:i+samplesPerClass] = smpldClssIndcs
-    return sampledIndices
+def getLoadersBalanced(trainset, amntLabeled, lab_BS, ul_BS, **kwargs):
+    """ Variant of getUandLloaders"""
+    numLabeled = amntLabeled
+    if amntLabeled <= 1: 
+        numLabeled *= len(trainset)
     
-    #TODO: Finish this
+    indices = np.random.permutation(len(trainset))
+    labIndices = classBalancedSampleIndices(trainset, numLabeled)
+
+    labSampler = ShuffleCycleSubsetSampler(labIndices)
+    labLoader = DataLoader(trainset,sampler=labSampler,batch_size=lab_BS,**kwargs)
+    if amntLabeled == 0: labLoader = EmptyLoader()
+
+    # Includes the labeled samples in the unlabeled data
+    unlabSampler = ShuffleCycleSubsetSampler(indices)
+    unlabLoader = DataLoader(trainset,sampler=unlabSampler,batch_size=ul_BS,**kwargs)
+        
+    return unlabLoader, labLoader
+
+def classBalancedSampleIndices(trainset, numLabeled):
+    """ Generates a subset of indices of y (of size numLabeled) so that
+        each class is equally represented """
+    y = np.array([target for img,target in trainset])
+    uniqueVals = np.unique(y)
+    numLabeled = (numLabeled // len(uniqueVals))*len(uniqueVals)
+    classIndices = [np.where(y==val) for val in uniqueVals]
+    sampledIndices = np.empty(numLabeled, dtype=np.int64)
+    m = numLabeled // len(uniqueVals) # The Number of Samples per Class
+    for i in range(len(uniqueVals)):
+        sampledclassIndices = np.random.choice(classIndices[i][0],m,replace=False)
+        sampledIndices[i*m:i*m+m] = sampledclassIndices
+    return sampledIndices

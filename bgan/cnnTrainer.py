@@ -6,7 +6,7 @@ from torch.autograd import Variable
 import tensorboardX
 from torch.utils.data import DataLoader
 from bgan.utils import to_var_gpu, to_lambda, prettyPrintLog
-from bgan.dataloaders import getUandLloaders
+from bgan.dataloaders import getUandLloaders, getLoadersBalanced
 #from bgan.schedules import CosineAnnealer, AdamR
 
 import torch.nn.functional as F
@@ -54,7 +54,8 @@ class CnnTrainer:
     def getDataLoaders(self, datasets, lab_BS, ul_BS, amntLab, num_workers):
         """ Handles getting cyclic dataloaders (ul and lab) for data """
         trainset, devset, testset = datasets
-        unl_loader, lab_loader = getUandLloaders(trainset,amntLab,lab_BS,ul_BS,num_workers=num_workers,pin_memory=True)
+        unl_loader, lab_loader = getLoadersBalanced(trainset,amntLab,lab_BS,ul_BS,
+                                            num_workers=num_workers,pin_memory=True)
         dev_loader = DataLoader(devset, batch_size = 64, num_workers = num_workers)
         test_loader = DataLoader(testset, batch_size = 64, num_workers = num_workers)
         return lab_loader, dev_loader, test_loader, unl_loader

@@ -12,10 +12,6 @@ from bgan.schedules import cosLr, sigmoidConsRamp
 import torch.optim as optim
 
 
-
-
-
-
 img_size = 32
 transform_dev = transforms.Compose(
     [transforms.Resize(img_size),
@@ -36,21 +32,16 @@ datasets = (trainset, devset, testset)
 
 
 
-
 epochs = int(np.floor(350))#*(50000/4000)))
-#rampup_epochs = (4/15)*total_epochs
-#cons_lambda = lambda epoch: 100 #*sigmoid_rampup(epoch, rampup_epochs)
 
 opt_constr = lambda params, base_lr: optim.SGD(params, base_lr, .9, weight_decay=1e-4, nesterov=True)
-
 lr_lambda = cosLr(epochs, 1)
-cons_weight = lambda epoch: 100*sigmoidConsRamp(5)(epoch)
 
 savedir = '/home/maf388/tb-experiments/mtparamsPI/'
 config = {'base_lr':.1, 'amntLab':4000, 
           'lab_BS':50, 'ul_BS':50, 'num_workers':2,
           'lr_lambda':lr_lambda, 'opt_constr':opt_constr,
-          'cons_weight':cons_weight, 
+          'cons_weight':100, 'rampup_epochs':5
           }
 
 baseCNN = layer13(numClasses=10)
