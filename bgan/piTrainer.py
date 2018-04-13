@@ -1,13 +1,8 @@
 import torch
 import numpy as np
 import torch.nn as nn
-import torch.optim as optim
-from torch.autograd import Variable, grad
-import torch.nn.functional as F
-import torchvision.utils as vutils
+
 from bgan.cnnTrainer import CnnTrainer
-from bgan.vatLDS import LDSloss, getAdvPert
-from bgan.utils import to_var_gpu, to_lambda, prettyPrintLog
 from bgan.losses import softmax_mse_loss
 from bgan.schedules import sigmoidConsRamp
 
@@ -26,7 +21,7 @@ class PiTrainer(CnnTrainer):
         pred1 = self.CNN(x_unlab)
         pred2 = self.CNN(x_unlab)
         weight = self.hypers['cons_weight']*self.consRamp(self.epoch)
-        cons_loss =  cons_weight*softmax_mse_loss(pred1, pred2.detach())/self.hypers['ul_BS']
+        cons_loss =  weight*softmax_mse_loss(pred1, pred2)/self.hypers['ul_BS']
         return cons_loss
 
     def loss(self, *data):
@@ -43,6 +38,6 @@ class PiTrainer(CnnTrainer):
         step = i + epoch*self.numBatchesPerEpoch
         if step%2000==0:
             self.metricLog['Unlab_loss(batch)'] = self.unlabLoss(trainData[1][0]).cpu().data[0]
-            current_weight = self.hypers['cons_weight'](self.epoch)
-            self.scheduleLog['cons_weight'] = current_weight
+            #current_weight = self.hypers['cons_weight'](self.epoch)
+            #self.scheduleLog['cons_weight'] = current_weight
         super().logStuff(i, epoch, numEpochs, trainData)

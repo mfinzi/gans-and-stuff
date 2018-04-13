@@ -27,7 +27,7 @@ def cross_ent_withlogits(p_logits,q_logits):
     return -1*(SM(p_logits)*LSM(q_logits)).sum(dim=1).mean(dim=0)
 
 class VatCnnTrainer(CnnTrainer):
-    def __init__(self, *args, regScale=1, advEps=2, entMin=True,
+    def __init__(self, *args, regScale=1, advEps=8, entMin=True,
                      **kwargs):
         def initClosure():
             self.hypers.update(

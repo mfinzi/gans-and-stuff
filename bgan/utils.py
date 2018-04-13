@@ -4,14 +4,15 @@ from torch.autograd import Variable, grad
 from torch.distributions import Distribution
 import numbers
 
-def to_var_gpu(x):
+def to_var_gpu(x, volatile=False):
     """ recursively map the elements to variables on gpu """
     if x is None: 
         return x
     if type(x) in [list, tuple]:
-        return type(x)(map(to_var_gpu, x))
+        curry = lambda x: to_var_gpu(x, volatile)
+        return type(x)(map(curry, x))
     else: 
-        return Variable(x).cuda()
+        return Variable(x, volatile=volatile).cuda()
 
 def to_lambda(x):
     """ Turns constants into constant functions """

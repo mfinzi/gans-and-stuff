@@ -5,25 +5,21 @@ import torch.optim as optim
 from torch.autograd import Variable
 import tensorboardX
 from torch.utils.data import DataLoader
-from bgan.utils import to_var_gpu, to_lambda, prettyPrintLog
-from bgan.dataloaders import getUandLloaders, getLoadersBalanced
-#from bgan.schedules import CosineAnnealer, AdamR
+from bgan.dataloaders import getUnlabLoader, getLabLoader
+from bgan.utils import to_var_gpu, prettyPrintLog
 
 import torch.nn.functional as F
-import itertools
-import shutil
-import copy
+import copy, os
 
 class CnnTrainer:
     
-    def __init__(self, CNN, datasets, save_dir, 
+    def __init__(self, CNN, datasets, save_dir, load_path=None,
                 base_lr=2e-4, lab_BS=32, ul_BS=32,
                 amntLab=1, num_workers=2, opt_constr=None,
                 extraInit=lambda:None, lr_lambda = lambda e: 1):
-                #cycle_length=100, cycle_mult=1.3, with_restart=True):
 
         # Setup tensorboard logger
-        #shutil.rmtree(save_dir, ignore_errors=True) # Make clean
+        self.save_dir = save_dir
         self.writer = tensorboardX.SummaryWriter(save_dir)
         self.metricLog = {}
         self.scheduleLog = {}
@@ -37,8 +33,12 @@ class CnnTrainer:
         self.lr_scheduler = optim.lr_scheduler.LambdaLR(self.optimizer,lr_lambda)
 
         # Setup Dataloaders and Iterators
-        self.lab_train, self.dev, self.test, self.unl_train \
-                    = self.getDataLoaders(datasets,lab_BS,ul_BS,amntLab, num_workers)
+        trainset, devset, testset = datasets
+        extraArgs = {'num_workers':num_workers}
+        self.unl_train = getUnlabLoader(trainset, ul_BS, **extraArgs)
+        self.lab_train = getLabLoader(trainset,amntLab,lab_BS,**extraArgs)
+        self.dev  = DataLoader(devset, batch_size=64, **extraArgs)
+        self.test = DataLoader(testset, batch_size=64, **extraArgs)
         self.train_iter = iter(self.lab_train)
         self.numBatchesPerEpoch = len(self.lab_train)
 
@@ -47,22 +47,16 @@ class CnnTrainer:
                          'ul_BS':ul_BS}
         # Extra work to do (used for subclass)
         extraInit()
+        # Load checkpoint if specified
+        if load_path: self.load_checkpoint(load_path) 
+        else: self.epoch = 0
         # Log the hyper parameters
         for tag, value in self.hypers.items():
             self.writer.add_text('ModelSpec',tag+' = '+str(value))
 
-    def getDataLoaders(self, datasets, lab_BS, ul_BS, amntLab, num_workers):
-        """ Handles getting cyclic dataloaders (ul and lab) for data """
-        trainset, devset, testset = datasets
-        unl_loader, lab_loader = getLoadersBalanced(trainset,amntLab,lab_BS,ul_BS,
-                                            num_workers=num_workers,pin_memory=True)
-        dev_loader = DataLoader(devset, batch_size = 64, num_workers = num_workers)
-        test_loader = DataLoader(testset, batch_size = 64, num_workers = num_workers)
-        return lab_loader, dev_loader, test_loader, unl_loader
-
     def train(self, numEpochs=100):
         """ The main training loop called (also for subclasses)"""
-        for epoch in range(numEpochs):
+        for epoch in range(self.epoch, numEpochs):
             self.lr_scheduler.step(epoch); self.epoch = epoch
             for i in range(self.numBatchesPerEpoch):
                 trainData = to_var_gpu(next(self.train_iter))
@@ -97,36 +91,92 @@ class CnnTrainer:
             self.writer.add_scalars('schedules', self.scheduleLog, step)
 
     def getLabeledXYonly(self, trainData):
-        """ should return a tuple (x,y) that will be used to calc acc """
+        """ should return a tuple (x,y) that will be used to calc acc 
+            subclasses should override this method """
         return trainData
 
-    def batchAccuracy(self, *labeledData):
+    def batchAccuracy(self, *labeledData, model = None):
+        if model is None: model = self.CNN
         x, y = labeledData
-        self.CNN.eval()
-        predictions = self.CNN(x).max(1)[1].type_as(y)
+        model.eval()
+        predictions = model(x).max(1)[1].type_as(y)
         correct = predictions.eq(y).cpu().data.numpy().mean()
-        self.CNN.train()
+        model.train()
         return correct
     
-    def getDevsetAccuracy(self):
+    def getDevsetAccuracy(self, model = None):
         accSum = 0
         for xy in self.dev:
             xy = to_var_gpu(xy)
-            accSum += self.batchAccuracy(*xy)
+            accSum += self.batchAccuracy(*xy, model)
         acc = accSum / len(self.dev)
         return acc
 
+    def save_checkpoint(self, save_dir = None):
+        if save_dir is None: save_dir = self.save_dir
+        filepath = save_dir + 'checkpoints/c.{}.ckpt'.format(self.epoch)
+        state = {
+            'epoch':self.epoch+1,
+            'model_state':self.CNN.state_dict(),
+            'optim_state':self.optimizer.state_dict(),
+            'lab_sampler':self.lab_train.batch_sampler,
+        } # Saving the sampler for the labeled dataset is crucial
+          # so that we use the same subset of data as before
+        torch.save(state, filepath)
 
-    # def initSWA(self):
-    #     self.n = 0
-    #     self.SWA = copy.deepcopy(self.CNN)
-    
-    # def updateSWA(self):
-    #     n = self.n
-    #     for param1, param2 in zip(self.SWA.parameters(),self.CNN.parameters()):
-    #         param1.data = param1.data*n/(n+1) + param2.data/(n+1)
-    #     self.n+=1
-    #     # # Keep Running average of the weights, updated every epoch
-    #     #         if self.hypers['swa']:
-    #     #             self.updateSWA()
-    # if swa: self.initSWA()
+    def load_checkpoint(self, load_path):
+        if os.path.isfile(load_path):
+            print("=> loading checkpoint '{}'".format(load_path))
+            state = torch.load(load_path)
+            self.epoch = state['epoch']
+            self.CNN.load_state_dict(state['model_state'])
+            self.optimizer.load_state_dict(state['optim_state'])
+            self.lab_train.batch_sampler = state['lab_sampler']
+        else:
+            print("=> no checkpoint found at '{}'".format(load_path))
+
+
+
+
+
+
+
+
+
+    ### Methods For performing SWA after regular training is done ####
+
+    def constSWA(self, numEpochs=100, lr=1e-4):
+        """ runs Stochastic Weight Averaging for numEpochs epochs using const lr """
+        self.SWAupdates = 0
+        self.SWA = copy.deepcopy(self.CNN)
+        ## Set the new constant learning rate
+        new_lr_lambda = lambda epoch: lr/self.hypers['base_lr']
+        self.lr_scheduler = optim.lr_scheduler.LambdaLR(self.optimizer,new_lr_lambda)
+
+        for epoch in range(self.epoch, numEpochs+self.epoch):
+            self.lr_scheduler.step(epoch); self.epoch = epoch
+            for i in range(self.numBatchesPerEpoch):
+                trainData = to_var_gpu(next(self.train_iter))
+                self.step(*trainData)
+                self.swaLogStuff(i, epoch)
+                self.logStuff(i, epoch, numEpochs+self.epoch, trainData)
+            self.updateSWA()
+
+    def updateSWA(self):
+        n = self.SWAupdates
+        for param1, param2 in zip(self.SWA.parameters(),self.CNN.parameters()):
+            param1.data = param1.data*n/(n+1) + param2.data/(n+1)
+        self.SWAupdates += 1
+
+    def swaLogStuff(self, i, epoch):
+        step = i + epoch*self.numBatchesPerEpoch
+        if step%2000==0:
+            self.updateBatchNorm(self.SWA)
+            self.metricLog['SWA_Val_Acc'] = self.getDevsetAccuracy(self.SWA)
+
+    def updateBatchNorm(self, model):
+        model.train()
+        for _ in range(self.numBatchesPerEpoch):
+            tensors = next(self.train_iter)
+            trainData = to_var_gpu(tensors, volatile=True)
+            out = model(self.getLabeledXYonly(trainData)[0])

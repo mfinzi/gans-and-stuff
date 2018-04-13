@@ -37,9 +37,9 @@ epochs = int(np.floor(350))#*(50000/4000)))
 opt_constr = lambda params, base_lr: optim.SGD(params, base_lr, .9, weight_decay=1e-4, nesterov=True)
 lr_lambda = cosLr(epochs, 1)
 
-savedir = '/home/maf388/tb-experiments/mtparamsPI/'
+savedir = '/home/maf388/tb-experiments/mtparamsPI2path2/'
 config = {'base_lr':.1, 'amntLab':4000, 
-          'lab_BS':50, 'ul_BS':50, 'num_workers':2,
+          'lab_BS':50, 'ul_BS':50, 'num_workers':0,
           'lr_lambda':lr_lambda, 'opt_constr':opt_constr,
           'cons_weight':100, 'rampup_epochs':5
           }
@@ -54,3 +54,4 @@ fullCNN = nn.Sequential(
 
 trainer = PiTrainer(fullCNN,datasets,savedir,**config)
 trainer.train(epochs)
+trainer.save_checkpoint()
