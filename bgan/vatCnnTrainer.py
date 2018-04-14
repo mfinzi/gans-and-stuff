@@ -80,7 +80,7 @@ class VatCnnTrainer(CnnTrainer):
             x_unlab = trainData[1][0]; someX = x_unlab[:16]
             r_adv = self.hypers['advEps'] * self.getAdvPert(self.CNN, someX)
             adversarialImages = (someX + r_adv).cpu().data
-            imgComparison = torch.cat((adversarialImages, x_unlab[:16]))
+            imgComparison = torch.cat((adversarialImages, someX.cpu().data))
             self.writer.add_image('adversarialInputs', #,range=(-2.5,2.5)
                     vutils.make_grid(imgComparison,normalize=True), step)
             self.metricLog.update({'Unlab_loss(batch)':

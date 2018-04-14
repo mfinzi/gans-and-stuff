@@ -3,7 +3,7 @@ import numpy as np
 import torch.nn as nn
 
 from bgan.cnnTrainer import CnnTrainer
-from bgan.losses import softmax_mse_loss
+from bgan.losses import softmax_mse_loss, softmax_mse_loss_both
 from bgan.schedules import sigmoidConsRamp
 
 class PiTrainer(CnnTrainer):
@@ -21,7 +21,7 @@ class PiTrainer(CnnTrainer):
         pred1 = self.CNN(x_unlab)
         pred2 = self.CNN(x_unlab)
         weight = self.hypers['cons_weight']*self.consRamp(self.epoch)
-        cons_loss =  weight*softmax_mse_loss(pred1, pred2)/self.hypers['ul_BS']
+        cons_loss =  weight*softmax_mse_loss_both(pred1, pred2)/self.hypers['ul_BS']
         return cons_loss
 
     def loss(self, *data):

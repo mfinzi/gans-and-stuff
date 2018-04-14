@@ -108,13 +108,15 @@ class CnnTrainer:
         accSum = 0
         for xy in self.dev:
             xy = to_var_gpu(xy)
-            accSum += self.batchAccuracy(*xy, model)
+            accSum += self.batchAccuracy(*xy, model=model)
         acc = accSum / len(self.dev)
         return acc
 
     def save_checkpoint(self, save_dir = None):
         if save_dir is None: save_dir = self.save_dir
-        filepath = save_dir + 'checkpoints/c.{}.ckpt'.format(self.epoch)
+        save_path = filepath = save_dir + 'checkpoints/'
+        os.makedirs(save_path, exist_ok=True)
+        filepath = save_path + 'c.{}.ckpt'.format(self.epoch)
         state = {
             'epoch':self.epoch+1,
             'model_state':self.CNN.state_dict(),

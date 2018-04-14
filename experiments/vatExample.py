@@ -45,7 +45,7 @@ lr_lambda = cosLr(total_epochs, 1)
 
 savedir = '/home/maf388/tb-experiments/vatTest/'
 config = {'base_lr':.1, 'amntLab':4000, 
-          'lab_BS':50, 'ul_BS':50, 'num_workers':2,
+          'lab_BS':50, 'ul_BS':50, 'num_workers':0,
           'lr_lambda':lr_lambda, 'opt_constr':opt_constr,
           'advEps':8,
           'entMin':False, 

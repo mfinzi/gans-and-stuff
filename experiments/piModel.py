@@ -39,7 +39,7 @@ lr_lambda = cosLr(epochs, 1)
 
 savedir = '/home/maf388/tb-experiments/mtparamsPI2path2/'
 config = {'base_lr':.1, 'amntLab':4000, 
-          'lab_BS':50, 'ul_BS':50, 'num_workers':0,
+          'lab_BS':50, 'ul_BS':50, 'num_workers':2,
           'lr_lambda':lr_lambda, 'opt_constr':opt_constr,
           'cons_weight':100, 'rampup_epochs':5
           }
