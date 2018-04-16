@@ -43,11 +43,11 @@ total_epochs = 350
 opt_constr = lambda params, base_lr: optim.SGD(params, base_lr, .9, weight_decay=1e-4, nesterov=True)
 lr_lambda = cosLr(total_epochs, 1)
 
-savedir = '/home/maf388/tb-experiments/vatTest/'
+savedir = '/home/maf388/tb-experiments/vatTest16/'
 config = {'base_lr':.1, 'amntLab':4000, 
-          'lab_BS':50, 'ul_BS':50, 'num_workers':0,
+          'lab_BS':50, 'ul_BS':50, 'num_workers':2,
           'lr_lambda':lr_lambda, 'opt_constr':opt_constr,
-          'advEps':8,
+          'advEps':32,
           'entMin':False, 
           }
 
@@ -60,3 +60,4 @@ fullCNN = nn.Sequential(
 )
 trainer = VatCnnTrainer(fullCNN,datasets,savedir,**config)
 trainer.train(total_epochs)
+trainer.save_checkpoint()

@@ -16,13 +16,13 @@ def _l2_normalize(d):
     return d
 
 def kl_div_withlogits(p_logits, q_logits):
-    kl_div = nn.KLDivLoss(size_average=True)
+    kl_div = nn.KLDivLoss(size_average=True).cuda()
     LSM = nn.LogSoftmax(dim=1)
     SM = nn.Softmax(dim=1)
     return kl_div(LSM(q_logits), SM(p_logits))
 
 def cross_ent_withlogits(p_logits,q_logits):
-    LSM = nn.LogSoftmax(dim=1)
+    LSM = nn.LogSoftmax(dim=1).cuda()
     SM = nn.Softmax(dim=1)
     return -1*(SM(p_logits)*LSM(q_logits)).sum(dim=1).mean(dim=0)
 
@@ -50,6 +50,9 @@ class VatCnnTrainer(CnnTrainer):
         logits = self.CNN(x_unlab).detach()
 
         if self.hypers['entMin']:
+            # Not the same because gradients don't go through kl_div
+            # will need to add entropy term with non detached logits
+            assert False
             criterion = cross_ent_withlogits
         else:
             criterion = kl_div_withlogits
@@ -57,11 +60,10 @@ class VatCnnTrainer(CnnTrainer):
 
     @staticmethod
     def getAdvPert(model, X, powerIts=1, xi=1e-6):
-        logits = model(X).detach()
         ddata = torch.randn(X.size()).cuda()
         # calc adversarial direction
         d = Variable(xi*_l2_normalize(ddata), requires_grad=True)
-        logit_p = logits.detach()
+        logit_p = model(X).detach()
         perturbed_logits = model(X + d)
         adv_distance = kl_div_withlogits(logit_p, perturbed_logits)
         adv_distance.backward()
